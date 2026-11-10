@@ -1,0 +1,10 @@
+# 统一换行：源码与脚本用 CRLF（Windows 老工具链友好）
+* text=auto eol=crlf
+
+# 二进制资产不做文本转换
+*.png binary
+*.ico binary
+*.sav binary
+
+# build\*.bat 为纯 ASCII（早期版本曾用 GBK，因 cmd 在非 936 代码页下
+# 会把个别 GBK 尾字节当成 | 或 ^，导致脚本被拆行）。此处不再声明编码。
