@@ -33,6 +33,9 @@ int sh_item_eqtype(int id);
 /* id(1 基) -> 大类（GOODS 记录 +1） */
 int sh_item_major(int id);
 
+/* 道具的移动加成（有符号，可为负） */
+int sh_item_move(int id);
+
 /* id(1 基) -> 归一化类别（SH_KIND_*） */
 int sh_item_kind(int id);
 

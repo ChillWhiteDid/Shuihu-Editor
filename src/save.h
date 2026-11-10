@@ -86,6 +86,9 @@ int sh_find_unit(const sh_save *s, int type_id);
 
 /* 写入一个字段；成功 0，失败负值：
  *   -1 下标/字段非法  -2 值超范围  -3 会破坏 当前<=上限 的关系 */
+/* 移动加成的相对偏移（unit+0x64） */
+#define SH_MOVE_BONUS_REL 36
+
 int sh_set_field(sh_save *s, int idx, sh_field f, uint16_t v);
 /* 同 sh_set_field，但不检查「当前 ≤ 上限」（批量写入用，调用方需自行校验） */
 int sh_set_field_raw(sh_save *s, int idx, sh_field f, uint16_t v);

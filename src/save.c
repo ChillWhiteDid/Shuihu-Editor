@@ -21,6 +21,8 @@
  *       修改器的 16 人下拉框是固定花名册，选中缺席者会提示"没有找到此人物！！"。
  */
 #include "save.h"
+#include "goods.h"
+#include "human.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -272,6 +274,23 @@ int sh_field_max(sh_field f)
     }
 }
 
+/* 移动是派生值：unit+0x8A = 职业基础 + unit+0x64 + Σ装备(+104)。
+ * 存档 rel+74 只是当前值，游戏重算会覆盖；持久的是 rel+36。
+ * 设移动时把差值同步写进 rel+36，重算后仍等于目标值。 */
+static void write_move_bonus(sh_save *s, sh_unit *u, int target)
+{
+    int base = sh_class_base_move((int)u->id);
+    int eq = 0;
+    int k, bonus;
+
+    for (k = 0; k < SH_SLOT_COUNT; k++) eq += sh_item_move((int)u->slots[k]);
+    bonus = target - base - eq;
+    if (bonus < -32768) bonus = -32768;
+    if (bonus >  32767) bonus =  32767;
+
+    wr16(s->data, s->size, u->anchor + SH_MOVE_BONUS_REL, (uint16_t)bonus);
+}
+
 /* 只做范围检查，不检查「当前 ≤ 上限」。
  * 供批量写入使用：一次改「当前值 + 上限」时，中途必然出现 cur > max，
  * 逐字段检查会误拒；调用方应在全部写完后自行校验最终状态。 */
@@ -286,6 +305,7 @@ int sh_set_field_raw(sh_save *s, int idx, sh_field f, uint16_t v)
     u = &s->units[idx];
     wr16(s->data, s->size, u->anchor + (size_t)s_field_rel[f], v);
     u->f[f] = v;
+    if (f == SH_F_MOVE) write_move_bonus(s, u, (int)v);
     return 0;
 }
 
@@ -314,6 +334,7 @@ int sh_set_field(sh_save *s, int idx, sh_field f, uint16_t v)
         return -3;
     }
 
+    if (f == SH_F_MOVE) write_move_bonus(s, u, (int)v);
     return 0;
 }
 

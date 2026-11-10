@@ -8,6 +8,7 @@ extern const unsigned short SH_CLASS_OFF[];
 extern const unsigned short SH_SK_SID[];
 extern const unsigned char  SH_SK_LEVEL[];
 extern const unsigned char  SH_SK_HIDDEN[];
+extern const unsigned char  SH_CLASS_MOVE[];
 
 int sh_class_count(void)
 {
@@ -22,6 +23,13 @@ static int valid(int cls, int i)
     hi = (int)SH_CLASS_OFF[cls + 1];
     if (i < 0 || lo + i >= hi) return 0;
     return 1;
+}
+
+/* 职业的基础移动（HUMAN 记录 +9，单字节） */
+int sh_class_base_move(int cls)
+{
+    if (cls < 0 || cls >= SH_CLASS_COUNT) return 0;
+    return (int)SH_CLASS_MOVE[cls];
 }
 
 int sh_class_skill_count(int cls)

@@ -7,6 +7,7 @@ extern const int          SH_ITEM_COUNT;
 extern const char        *SH_ITEM_NAMES[];
 extern const unsigned char SH_ITEM_EQ[];
 extern const unsigned char SH_ITEM_MAJOR[];
+extern const signed char   SH_ITEM_MOVE[];
 
 int sh_item_count(void)
 {
@@ -50,6 +51,13 @@ const char *sh_kind_label(int kind)
     case SH_KIND_HAT:    return "帽子";
     default:             return "物品";
     }
+}
+
+/* 道具的移动加成（GOODS 记录 +104，有符号：实测存在 -1） */
+int sh_item_move(int id)
+{
+    if (id < 1 || id > SH_ITEM_COUNT) return 0;
+    return (int)SH_ITEM_MOVE[id - 1];
 }
 
 int sh_slot_kind(int slot)

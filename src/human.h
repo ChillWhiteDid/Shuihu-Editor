@@ -14,6 +14,9 @@
 /* 职业记录数（当前 72） */
 int sh_class_count(void);
 
+/* 职业的基础移动（HUMAN 记录 +9） */
+int sh_class_base_move(int cls);
+
 /* 第 class 条记录的技能条数；越界返回 0 */
 int sh_class_skill_count(int cls);
 

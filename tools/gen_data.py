@@ -30,6 +30,7 @@ r"""
 """
 import sys
 import os
+import struct
 
 IMAGE_BASE = 0x400000
 TBL_CHAR  = 0x443A5C   # 角色名表（按类型 id）
@@ -145,6 +146,15 @@ def emit_items(goods_path, src_dir):
         fh.write("const unsigned char SH_ITEM_MAJOR[] = {\n")
         for i, v in enumerate(major):
             fh.write("    %d,%s" % (v, "" if (i + 1) % 20 else "\n"))
+        fh.write("\n};\n\n")
+        # 移动加成（记录 +104，**有符号**：实测存在 -1）
+        fh.write("const signed char SH_ITEM_MOVE[] = {\n")
+        for i in range(count):
+            off2 = GOODS_HEADER + i * GOODS_STRIDE
+            mv = struct.unpack_from("<h", data, off2 + 104)[0]
+            if mv < -128: mv = -128
+            if mv > 127: mv = 127
+            fh.write("    %d,%s" % (mv, "" if (i + 1) % 20 else "\n"))
         fh.write("\n};\n")
     print("items      :", count)
     return out_path
@@ -209,6 +219,18 @@ def emit_human(human_path, src_dir):
         fh.write("const unsigned char SH_SK_HIDDEN[] = {\n")
         for i, (sid, lv, hid) in enumerate(flat):
             fh.write("    %d,%s" % (hid, "\n" if (i + 1) % 16 == 0 else ""))
+        fh.write("\n};\n")
+    # 每个职业的基础移动（记录 +9，单字节）
+    moves = []
+    off2 = HUMAN_HDR
+    for subs in recs:
+        moves.append(data[off2 + 9])
+        off2 = off2 + HUMAN_BASE + len(subs) * HUMAN_SUB
+    out2 = os.path.join(src_dir, "human_data.c")
+    with open(out2, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\nconst unsigned char SH_CLASS_MOVE[] = {\n")
+        for i, v in enumerate(moves):
+            fh.write("    %d,%s" % (v, "" if (i + 1) % 20 else "\n"))
         fh.write("\n};\n")
     print("human      :", len(recs), "职业 /", len(flat), "条技能")
     return out

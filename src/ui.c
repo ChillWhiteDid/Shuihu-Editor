@@ -45,7 +45,7 @@
 #define ID_BAK_OK     1029  /* 恢复备份窗口：恢复按钮 */
 #define ID_BAK_CANCEL 1031  /* 恢复备份窗口：取消按钮 */
 
-#define APP_VERSION  "v2.1"
+#define APP_VERSION  "v2.2"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -122,8 +122,15 @@ static void status(const char *fmt, ...)
     if (g.hStatus) SetWindowTextA(g.hStatus, ansi(buf));
 }
 
+/* 自检模式下不要弹模态框（无人点确定会卡死），改为记录下来供断言 */
+static char g_lastMsg[512];
+
 static void msg(const char *title, const char *text, UINT flags)
 {
+    strncpy(g_lastMsg, text ? text : "", sizeof(g_lastMsg) - 1);
+    g_lastMsg[sizeof(g_lastMsg) - 1] = (char)0;
+
+    if (g.uiTest || g.layoutTest) return;    /* 自检：不弹框 */
     MessageBoxA(NULL, ansi(text), ansi(title), flags);
 }
 
@@ -1060,6 +1067,13 @@ static void dump_layout(HWND hwnd)
     fclose(s_lf);
     s_lf = NULL;
 }
+/* 读 16 位（仅用于自检） */
+static unsigned short wr_peek16(size_t off)
+{
+    if (!g.s.data || off + 1 >= g.s.size) return 0;
+    return (unsigned short)(g.s.data[off] | (g.s.data[off + 1] << 8));
+}
+
 /* -uitest：模拟「改值 -> 切角色 -> 切回来」，验证修改没丢 */
 static void do_uitest(HWND hwnd)
 {
@@ -1128,6 +1142,27 @@ static void do_uitest(HWND hwnd)
     fprintf(f, "case4 非法组合被拒并回滚: apply_ok=%d 内存 hp=%u 期望仍为 %d -> %s\r\n",
             ok, (unsigned)g.s.units[g.sel].f[SH_F_HP], got,
             (!ok && (int)g.s.units[g.sel].f[SH_F_HP] == got) ? "PASS" : "FAIL");
+
+    /* case7：改「移动」应折算到 rel+36，使游戏重算后仍是目标值 */
+    {
+        int base, eq, bonus, move, k;
+        reload_from_disk();
+        SendMessageA(g.hList, LB_SETCURSEL, row0, 0);
+        SendMessageA(hwnd, WM_COMMAND, MAKEWPARAM(ID_LIST, LBN_SELCHANGE), (LPARAM)g.hList);
+        SetWindowTextA(g.hEdit[12], "12");    /* 移动是第 13 个字段（索引 12） */
+        ok = apply_current(1);
+        {
+            const sh_unit *uu = &g.s.units[g.sel];
+            base = sh_class_base_move((int)uu->id);
+            eq = 0;
+            for (k = 0; k < SH_SLOT_COUNT; k++) eq += sh_item_move((int)uu->slots[k]);
+            bonus = (short)wr_peek16(uu->anchor + SH_MOVE_BONUS_REL);
+            move  = (short)uu->f[SH_F_MOVE];
+        }
+        fprintf(f, "case7 改移动折算加成: apply=%d 移动=%d 加成=%d 重算=%d(期望12) -> %s\r\n",
+                ok, move, bonus, base + bonus + eq,
+                (ok && move == 12 && base + bonus + eq == 12) ? "PASS" : "FAIL");
+    }
 
     /* case6：没改任何东西时，切换人物不应被标记为"有未保存修改" */
     {
