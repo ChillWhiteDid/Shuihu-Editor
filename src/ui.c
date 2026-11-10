@@ -50,9 +50,14 @@
 #define ID_GB_LIST   1034  /* 道具表窗口：列表 */
 #define ID_GB_EDIT0  1040  /* 道具表窗口：5 个字段输入框 */
 #define ID_GB_SAVE   1050  /* 道具表窗口：写入文件 */
-#define ID_GB_CLOSE  1051  /* 道具表窗口：关闭 */
+#define ID_GB_CLOSE  1051  /* 保留（改页签后不再使用） */
+#define ID_TAB_SAVE  1060  /* 页签：存档修改 */
+#define ID_TAB_GOODS 1061  /* 页签：道具编辑 */
+#define ID_GB_WARN   1062  /* 道具页：警示条 */
+#define ID_GB_LAB0   1063  /* 道具页：5 个字段名 */
+#define ID_GB_RNG0   1068  /* 道具页：5 个范围提示 */
 
-#define APP_VERSION  "v2.1"
+#define APP_VERSION  "v2.2"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -80,6 +85,9 @@ typedef struct {
     char    argPath[MAX_PATH];         /* 命令行传入的存档路径（可选） */
     HICON   hIconBig, hIconSmall;      /* 运行时从 logo.ico 加载 */
     char    iniPath[MAX_PATH];         /* exe 同目录的 shuihu-edit.ini */
+    HWND    hGbList;                   /* 道具页：列表 */
+    HWND    hGbEdit[SH_GF_COUNT];      /* 道具页：5 个字段输入框 */
+    int     page;                      /* 0 = 存档页，1 = 道具页 */
     int     dirty;                     /* 与载入快照相比是否有改动 */
     uint8_t *base;                     /* 载入时的字节快照（判断 dirty 用） */
     size_t   baseSize;
@@ -101,6 +109,12 @@ static void sync_baseline(void);
 static int  recompute_dirty(void);
 static void update_title(HWND hwnd, int dirty);
 static void do_about(void);
+static void set_page(int which);
+static void do_goods(void);
+static void gb_fill_list(void);
+static void gb_show_item(int id);
+static int  gb_apply(void);
+static void gb_commit(void);
 static void build_ini_path(void);
 static void load_settings(void);
 static void remember_dir(const char *fileOrDir);
@@ -835,8 +849,8 @@ static int goods_locate(char *out, size_t n)
 static void gb_fill_list(void)
 {
     int id;
-    if (!s_gbList) return;
-    SendMessageA(s_gbList, LB_RESETCONTENT, 0, 0);
+    if (!g.hGbList) return;
+    SendMessageA(g.hGbList, LB_RESETCONTENT, 0, 0);
     for (id = 1; id <= s_gb.count; id++) {
         char line[220];
         sprintf(line, "%3d  %-16s  攻%3d 防%3d 移%3d 体%3d 气%3d",
@@ -846,7 +860,7 @@ static void gb_fill_list(void)
                 sh_goods_get(&s_gb, id, SH_GF_MOVE),
                 sh_goods_get(&s_gb, id, SH_GF_HPMAX),
                 sh_goods_get(&s_gb, id, SH_GF_MPMAX));
-        SendMessageA(s_gbList, LB_ADDSTRING, 0, (LPARAM)ansi(line));
+        SendMessageA(g.hGbList, LB_ADDSTRING, 0, (LPARAM)ansi(line));
     }
 }
 
@@ -858,7 +872,7 @@ static void gb_show_item(int id)
     if (id < 1) return;
     for (f = 0; f < SH_GF_COUNT; f++) {
         sprintf(buf, "%d", sh_goods_get(&s_gb, id, (sh_goods_field)f));
-        SetWindowTextA(s_gbEdit[f], buf);
+        SetWindowTextA(g.hGbEdit[f], buf);
     }
 }
 
@@ -870,7 +884,7 @@ static int gb_apply(void)
     for (f = 0; f < SH_GF_COUNT; f++) {
         char buf[32];
         int v;
-        GetWindowTextA(s_gbEdit[f], buf, sizeof(buf));
+        GetWindowTextA(g.hGbEdit[f], buf, sizeof(buf));
         v = atoi(buf);
         if (sh_goods_set(&s_gb, s_gbSel, (sh_goods_field)f, v) != 0) {
             char m[256];
@@ -885,12 +899,69 @@ static int gb_apply(void)
     return 1;
 }
 
+/* 切换页面：0 = 存档修改，1 = 道具编辑（伪标签，按 ID 段显隐） */
+static void set_page(int which)
+{
+    HWND c;
+    int goods;
+
+    g.page = which;
+    for (c = GetWindow(g.hMain, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+        int id = GetDlgCtrlID(c);
+        if (id == 0) continue;                       /* 无 ID 的控件保持原样 */
+        if (id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS) continue;
+        goods = ((id >= ID_GB_LIST && id <= ID_GB_CLOSE) ||
+                 (id >= ID_GB_WARN && id <= ID_GB_RNG0 + SH_GF_COUNT - 1));
+        ShowWindow(c, (goods == which) ? SW_SHOW : SW_HIDE);
+    }
+    EnableWindow(GetDlgItem(g.hMain, ID_TAB_SAVE),  which == 0 ? FALSE : TRUE);
+    EnableWindow(GetDlgItem(g.hMain, ID_TAB_GOODS), which == 1 ? FALSE : TRUE);
+}
+
+/* 进入道具页：首次进入时定位并载入 GOODS.DAB */
+static void do_goods(void)
+{
+    char path[600];
+
+    if (!g.path[0]) {
+        msg("提示", "请先打开存档。\n\n道具表位置是根据存档目录推断的。",
+            MB_ICONINFORMATION);
+        return;
+    }
+
+    if (!s_gbLoaded) {
+        if (!goods_locate(path, sizeof(path))) {
+            msg("找不到道具表",
+                "没有找到 GOODS.DAB。\n\n"
+                "程序会在存档目录的上级 Data\\ 里找，例如：\n"
+                "  游戏目录\\Save\\save1.sav\n"
+                "  游戏目录\\Data\\GOODS.DAB",
+                MB_ICONINFORMATION);
+            return;
+        }
+        if (sh_goods_load(path, &s_gb) != 0) {
+            msg("读入失败", "GOODS.DAB 打不开或长度不对（应为 11 + n×198）。",
+                MB_ICONERROR);
+            return;
+        }
+        s_gbLoaded = 1;
+        s_gbSel = 0;
+        gb_fill_list();
+        if (s_gb.count > 0) {
+            SendMessageA(g.hGbList, LB_SETCURSEL, 0, 0);
+            gb_show_item(1);
+        }
+        status("道具表：%s（%d 件）", path, s_gb.count);
+    }
+    set_page(1);
+}
+
 static void gb_commit(void)
 {
     char bak[600], m[900];
 
     if (!s_gbLoaded) return;
-    if (MessageBoxA(s_gbWnd,
+    if (MessageBoxA(g.hMain,
             ansi("即将写入 GOODS.DAB。\n\n"
                  "这是**游戏本体数据**：改完后所有存档里的这件道具都会变，\n"
                  "而不只是当前存档。程序会先自动备份原文件。\n\n确定写入吗？"),
@@ -908,141 +979,6 @@ static void gb_commit(void)
     }
     sprintf(m, "已写入并校验通过（%d 件道具）。\n\n备份：\n%s", s_gb.count, bak);
     msg("完成", m, MB_ICONINFORMATION);
-}
-
-static LRESULT CALLBACK GoodsProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
-{
-    switch (m) {
-    case WM_CREATE: {
-        int f;
-        HWND lb = CreateWindowExA(0, "LISTBOX", "",
-            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
-            12, 10, 360, 430, hwnd, (HMENU)(INT_PTR)ID_GB_LIST, NULL, NULL);
-        s_gbList = lb;
-        if (g.hFont) SendMessageA(lb, WM_SETFONT, (WPARAM)g.hFont, TRUE);
-
-        for (f = 0; f < SH_GF_COUNT; f++) {
-            HWND la = CreateWindowExA(0, "STATIC", ansi(sh_goods_field_label((sh_goods_field)f)),
-                WS_CHILD | WS_VISIBLE, 384, 16 + f * 30, 70, 20, hwnd, NULL, NULL, NULL);
-            s_gbEdit[f] = CreateWindowExA(0, "EDIT", "",
-                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
-                456, 12 + f * 30, 80, 22, hwnd,
-                (HMENU)(INT_PTR)(ID_GB_EDIT0 + f), NULL, NULL);
-            if (g.hFont) {
-                SendMessageA(la, WM_SETFONT, (WPARAM)g.hFont, TRUE);
-                SendMessageA(s_gbEdit[f], WM_SETFONT, (WPARAM)g.hFont, TRUE);
-            }
-        }
-
-        {
-            HWND sv = CreateWindowExA(0, "BUTTON", ansi("写入文件"),
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                384, 178, 80, 28, hwnd, (HMENU)(INT_PTR)ID_GB_SAVE, NULL, NULL);
-            HWND cl = CreateWindowExA(0, "BUTTON", ansi("关闭"),
-                WS_CHILD | WS_VISIBLE, 470, 178, 66, 28, hwnd,
-                (HMENU)(INT_PTR)ID_GB_CLOSE, NULL, NULL);
-            HWND st = CreateWindowExA(0, "STATIC",
-                ansi("改的是游戏本体数据，所有存档一起受影响。\n"
-                     "切换道具时会先记住当前修改；写入前会再确认一次。"),
-                WS_CHILD | WS_VISIBLE | SS_LEFT,
-                384, 216, 180, 60, hwnd, NULL, NULL, NULL);
-            if (g.hFont) {
-                SendMessageA(sv, WM_SETFONT, (WPARAM)g.hFont, TRUE);
-                SendMessageA(cl, WM_SETFONT, (WPARAM)g.hFont, TRUE);
-                SendMessageA(st, WM_SETFONT, (WPARAM)g.hFont, TRUE);
-            }
-            (void)sv; (void)cl; (void)st;
-        }
-        return 0;
-    }
-    case WM_COMMAND:
-        if (LOWORD(wp) == ID_GB_LIST && HIWORD(wp) == LBN_SELCHANGE) {
-            int row = (int)SendMessageA(s_gbList, LB_GETCURSEL, 0, 0);
-            int newId = row + 1;
-            if (newId == s_gbSel) return 0;
-            if (!gb_apply()) {                     /* 非法就不切走 */
-                SendMessageA(s_gbList, LB_SETCURSEL, s_gbSel - 1, 0);
-                return 0;
-            }
-            gb_show_item(newId);
-            return 0;
-        }
-        if (LOWORD(wp) == ID_GB_SAVE) {
-            if (gb_apply()) gb_commit();
-            return 0;
-        }
-        if (LOWORD(wp) == ID_GB_CLOSE) { DestroyWindow(hwnd); return 0; }
-        return 0;
-    case WM_CLOSE:
-        DestroyWindow(hwnd);
-        return 0;
-    case WM_DESTROY:
-        s_gbWnd = NULL;
-        return 0;
-    }
-    return DefWindowProcA(hwnd, m, wp, lp);
-}
-
-static void do_goods(void)
-{
-    WNDCLASSA wc;
-    MSG msgLoop;
-    char path[600], m[900];
-
-    if (s_gbLoaded) { sh_goods_free(&s_gb); s_gbLoaded = 0; }
-
-    if (!goods_locate(path, sizeof(path))) {
-        msg("找不到道具表",
-            "没有找到 GOODS.DAB。\n\n"
-            "程序会在存档目录的上级 Data\\ 里找，例如：\n"
-            "  游戏目录\\Save\\save1.sav\n"
-            "  游戏目录\\Data\\GOODS.DAB\n\n"
-            "请确认游戏目录结构，或先打开一次存档再点这个按钮。",
-            MB_ICONINFORMATION);
-        return;
-    }
-    if (sh_goods_load(path, &s_gb) != 0) {
-        msg("读入失败", "GOODS.DAB 打不开或长度不对（应为 11 + n×198）。", MB_ICONERROR);
-        return;
-    }
-    s_gbLoaded = 1;
-    s_gbSel = 0;
-
-    memset(&wc, 0, sizeof(wc));
-    wc.lpfnWndProc = GoodsProc;
-    wc.hInstance = GetModuleHandleA(NULL);
-    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-    wc.lpszClassName = "ShuiHuGoods";
-    RegisterClassA(&wc);
-
-    sprintf(m, "%s  ——  道具表", ansi("GOODS.DAB"));
-    s_gbWnd = CreateWindowExA(0, "ShuiHuGoods", m,
-        WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 600, 520,
-        g.hMain, NULL, wc.hInstance, NULL);
-    if (!s_gbWnd) { sh_goods_free(&s_gb); s_gbLoaded = 0; return; }
-
-    gb_fill_list();
-    if (s_gb.count > 0) {
-        SendMessageA(s_gbList, LB_SETCURSEL, 0, 0);
-        gb_show_item(1);
-    }
-
-    EnableWindow(g.hMain, FALSE);
-    ShowWindow(s_gbWnd, SW_SHOW);
-    UpdateWindow(s_gbWnd);
-
-    while (s_gbWnd && GetMessageA(&msgLoop, NULL, 0, 0) > 0) {
-        if (!IsDialogMessageA(s_gbWnd, &msgLoop)) {
-            TranslateMessage(&msgLoop);
-            DispatchMessageA(&msgLoop);
-        }
-    }
-    EnableWindow(g.hMain, TRUE);
-    SetActiveWindow(g.hMain);
-    sh_goods_free(&s_gb);
-    s_gbLoaded = 0;
 }
 
 static void do_about(void)
@@ -1315,11 +1251,37 @@ static void create_children(HWND hwnd)
     /* 第二行：技能相关 */
     mk("BUTTON", "查看技能树", BS_PUSHBUTTON, 282, 420, 96, 30, ID_TREE);
     mk("BUTTON", "解锁隐藏技", BS_PUSHBUTTON, 386, 420, 96, 30, ID_UNLOCK);
-    mk("BUTTON", "道具表",     BS_PUSHBUTTON, 490, 420, 90, 30, ID_GOODS);
 
     /* 第三行：关于 / 退出 */
     mk("BUTTON", "关于",       BS_PUSHBUTTON, 282, 454, 66, 30, ID_ABOUT);
     mk("BUTTON", "退出",       BS_PUSHBUTTON, 356, 454, 66, 30, ID_QUIT);
+
+    /* ---- 页签：两个按钮切换两个页面（伪标签，不依赖 comctl32）---- */
+    mk("BUTTON", "存档修改", BS_PUSHBUTTON, 12, 388, 118, 30, ID_TAB_SAVE);
+    mk("BUTTON", "道具编辑", BS_PUSHBUTTON, 138, 388, 118, 30, ID_TAB_GOODS);
+
+    /* ---- 道具页（默认隐藏；ID 1034..1059、1062..1072 归它）---- */
+    g.hGbList = mk("LISTBOX", "", WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
+                   12, 42, 260, 338, ID_GB_LIST);
+    {
+        int f;
+        for (f = 0; f < SH_GF_COUNT; f++) {
+            char rng[32];
+            mk("STATIC", sh_goods_field_label((sh_goods_field)f), SS_LEFT,
+               282, 50 + f * 30, 80, 20, ID_GB_LAB0 + f);
+            g.hGbEdit[f] = mk("EDIT", "", WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+                              372, 46 + f * 30, 80, 22, ID_GB_EDIT0 + f);
+            sprintf(rng, "%d .. %d",
+                    sh_goods_field_min((sh_goods_field)f),
+                    sh_goods_field_max((sh_goods_field)f));
+            mk("STATIC", rng, SS_LEFT, 462, 50 + f * 30, 90, 20, ID_GB_RNG0 + f);
+        }
+    }
+    mk("STATIC",
+       "改的是游戏本体数据（GOODS.DAB），会影响所有存档。\n"
+       "写入前自动备份，写后重读 200 件逐字段校验。",
+       SS_LEFT, 282, 216, 420, 46, ID_GB_WARN);
+    mk("BUTTON", "写入道具表", BS_PUSHBUTTON, 282, 272, 120, 30, ID_GB_SAVE);
 
     g.hStatus = mk("STATIC", "版本 " APP_VERSION " — 请先选择存档文件（可直接在左上角输入路径，再点「打开」）",
                    SS_LEFT | SS_LEFTNOWORDWRAP | SS_SUNKEN,
@@ -1447,6 +1409,26 @@ static void do_uitest(HWND hwnd)
     fprintf(f, "case4 非法组合被拒并回滚: apply_ok=%d 内存 hp=%u 期望仍为 %d -> %s\r\n",
             ok, (unsigned)g.s.units[g.sel].f[SH_F_HP], got,
             (!ok && (int)g.s.units[g.sel].f[SH_F_HP] == got) ? "PASS" : "FAIL");
+
+    /* case10：伪标签页切换 —— 可见性必须互斥，且状态栏/页签始终可见 */
+    {
+        int visSave1, visGoods1, visSave0, visGoods0, visStatus, visTab;
+
+        set_page(1);
+        visSave1  = (GetWindowLongA(g.hEdit[0], GWL_STYLE) & WS_VISIBLE) != 0;
+        visGoods1 = (GetWindowLongA(g.hGbList, GWL_STYLE) & WS_VISIBLE) != 0;
+        visStatus = (GetWindowLongA(g.hStatus, GWL_STYLE) & WS_VISIBLE) != 0;
+        visTab    = (GetWindowLongA(GetDlgItem(g.hMain, ID_TAB_SAVE), GWL_STYLE) & WS_VISIBLE) != 0;
+
+        set_page(0);
+        visSave0  = (GetWindowLongA(g.hEdit[0], GWL_STYLE) & WS_VISIBLE) != 0;
+        visGoods0 = (GetWindowLongA(g.hGbList, GWL_STYLE) & WS_VISIBLE) != 0;
+
+        fprintf(f, "case10 页签切换: 道具页(存档控件%d 道具控件%d) 存档页(存档控件%d 道具控件%d) 状态栏%d 页签%d -> %s\r\n",
+                visSave1, visGoods1, visSave0, visGoods0, visStatus, visTab,
+                (!visSave1 && visGoods1 && visSave0 && !visGoods0 && visStatus && visTab)
+                ? "PASS" : "FAIL");
+    }
 
     /* case9：GOODS.DAB 读/改/写/校验（只操作临时副本） */
     {
@@ -1641,9 +1623,26 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
         case ID_TREE:    do_skilltree(); return 0;
         case ID_RESTORE: do_restore();   return 0;
         case ID_RELOAD:  do_reload();    return 0;
-        case ID_GOODS:   do_goods();     return 0;
+        case ID_TAB_SAVE:
+            if (g.page == 1 && s_gbSel > 0) gb_apply();
+            set_page(0);
+            return 0;
+        case ID_TAB_GOODS: do_goods();    return 0;
         case ID_ABOUT:   do_about();     return 0;
         case ID_QUIT:    DestroyWindow(hwnd); return 0;
+        case ID_GB_SAVE:
+            if (gb_apply()) gb_commit();
+            return 0;
+        case ID_GB_LIST:
+            if (HIWORD(wp) == LBN_SELCHANGE) {
+                int row = (int)SendMessageA(g.hGbList, LB_GETCURSEL, 0, 0);
+                int newId = row + 1;
+                if (newId != s_gbSel) {
+                    if (gb_apply()) gb_show_item(newId);
+                    else SendMessageA(g.hGbList, LB_SETCURSEL, s_gbSel - 1, 0);
+                }
+            }
+            return 0;
         case ID_LIST:
             if (HIWORD(wp) == LBN_SELCHANGE) {
                 int sel = (int)SendMessageA(g.hList, LB_GETCURSEL, 0, 0);
