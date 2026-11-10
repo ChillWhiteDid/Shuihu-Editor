@@ -13,6 +13,7 @@
  *   shuihu-save -verify <save>           重新解析并自检
  */
 #include "save.h"
+#include "goodsfile.h"
 #include "names.h"
 #include "fileio.h"
 #include "goods.h"
@@ -106,6 +107,10 @@ static void usage(void)
     printf("  shuihu-save -items <save> <类型id>               列出 7 个槽（含道具名）\n");
     printf("  shuihu-save -slot <save> <类型id> <槽0-6> <道具id> [-y]   改某个槽\n");
     printf("  shuihu-save -tree <save> <类型id>               查看技能树\n");
+    printf("\n-- 道具表（改游戏本体数据，不影响单个存档）--\n");
+    printf("  shuihu-save -goods <GOODS.DAB>                  列出 200 件道具\n");
+    printf("  shuihu-save -goods-set <GOODS.DAB> <id> <字段> <值> [-y]\n");
+    printf("    字段: atk def move hpmax mpmax\n");
     printf("\n字段名: level hp hpmax mp mpmax atk def hit agi crit exp expnext move\n");
     printf("不加 -y 时只显示计划（干跑），不会改动任何文件。\n");
 }
@@ -319,6 +324,117 @@ int main(int argc, char **argv)
 
     cmd = argv[1];
     if (strcmp(cmd, "-fields") == 0) { print_field_table(); return 0; }
+    /* ---------------- 道具表（GOODS.DAB） ----------------
+     * 这两个命令不碰存档，必须在 sh_load 之前分流，
+     * 否则 GOODS.DAB 会被当成存档解析而报「不是存档」。 */
+    if (strcmp(cmd, "-goods") == 0 || strcmp(cmd, "-goods-set") == 0) {
+        sh_goods gb;
+        const char *gp = NULL;
+        int gi, yes = 0;
+
+        for (gi = 2; gi < argc; gi++) {
+            if (strcmp(argv[gi], "-y") == 0) yes = 1;
+            else if (argv[gi][0] != '-' && !gp) gp = argv[gi];
+        }
+        if (!gp) { printf("缺少 GOODS.DAB 路径。\n"); return 1; }
+
+        rc = sh_goods_load(gp, &gb);
+        if (rc != 0) {
+            printf("无法读入道具表：%s\n",
+                   rc == -4 ? "长度不是 11+n×198（不是 GOODS.DAB？）"
+                            : "文件打不开或太小");
+            return 1;
+        }
+
+        if (strcmp(cmd, "-goods") == 0) {
+            int id;
+            printf("文件   : %s\n", gp);
+            printf("大小   : %lu 字节（11 + %d × 198）\n",
+                   (unsigned long)gb.size, gb.count);
+            printf("\n  ID 名字                          类型   攻击  防御  移动  最大体 最大气\n");
+            printf("  ---------------------------------------------------------------------\n");
+            for (id = 1; id <= gb.count; id++) {
+                printf("  %3d %-28s %4d %5d %5d %5d %5d %5d\n",
+                       id, sh_item_name(id),
+                       (int)gb.data[SH_GOODS_HEAD + (size_t)(id - 1) * SH_GOODS_REC],
+                       sh_goods_get(&gb, id, SH_GF_ATK),
+                       sh_goods_get(&gb, id, SH_GF_DEF),
+                       sh_goods_get(&gb, id, SH_GF_MOVE),
+                       sh_goods_get(&gb, id, SH_GF_HPMAX),
+                       sh_goods_get(&gb, id, SH_GF_MPMAX));
+            }
+            printf("\n改道具请用 -goods-set（会先备份原文件）。\n");
+            sh_goods_free(&gb);
+            return 0;
+        }
+
+        /* -goods-set */
+        {
+            sh_goods_field fld = SH_GF_ATK;
+            int id, v, fi, found = -1;
+
+            if (argc < 6) {
+                printf("用法: -goods-set <GOODS.DAB> <id> <字段> <值> [-y]\n");
+                printf("字段: atk def move hpmax mpmax\n");
+                sh_goods_free(&gb);
+                return 1;
+            }
+            for (fi = 0; fi < SH_GF_COUNT; fi++) {
+                if (strcmp(argv[4], sh_goods_field_key((sh_goods_field)fi)) == 0) {
+                    found = fi;
+                    break;
+                }
+            }
+            if (found < 0) {
+                printf("未知字段: %s（可用 atk def move hpmax mpmax）\n", argv[4]);
+                sh_goods_free(&gb);
+                return 1;
+            }
+            fld = (sh_goods_field)found;
+            id = atoi(argv[3]);
+            v = atoi(argv[5]);
+
+            if (id < 1 || id > gb.count) {
+                printf("道具 id 必须 1..%d\n", gb.count);
+                sh_goods_free(&gb);
+                return 1;
+            }
+
+            printf("[计划] 道具 %d「%s」 %s: %d → %d  (范围 %d..%d)\n",
+                   id, sh_item_name(id), sh_goods_field_label(fld),
+                   sh_goods_get(&gb, id, fld), v,
+                   sh_goods_field_min(fld), sh_goods_field_max(fld));
+
+            if (sh_goods_set(&gb, id, fld, v) != 0) {
+                printf("[拒绝] 超出允许范围。\n");
+                sh_goods_free(&gb);
+                return 1;
+            }
+            if (!yes) {
+                printf("[干跑] 未加 -y，未改动任何文件。\n");
+                sh_goods_free(&gb);
+                return 0;
+            }
+            {
+                char bak[600];
+                if (sh_goods_backup(&gb, bak, sizeof(bak)) != 0) {
+                    printf("[失败] 备份失败，已中止（原文件未改动）。\n");
+                    sh_goods_free(&gb);
+                    return 1;
+                }
+                printf("[备份] %s\n", bak);
+            }
+            rc = sh_goods_write(&gb);
+            if (rc != 0) {
+                printf("[失败] %s\n", rc == -1 ? "写入失败" : "写后校验不一致");
+                sh_goods_free(&gb);
+                return 1;
+            }
+            printf("[校验] 通过：重读后 %d 件道具字段一致\n", gb.count);
+            sh_goods_free(&gb);
+            return 0;
+        }
+    }
 
     for (i = 2; i < argc; i++) {
         if (strcmp(argv[i], "-list") == 0) { /* 已由 cmd 决定 */ }
@@ -485,6 +601,7 @@ int main(int argc, char **argv)
         sh_free(&s);
         return 0;
     }
+
 
     if (strcmp(cmd, "-tree") == 0) {
         static char text[8192];

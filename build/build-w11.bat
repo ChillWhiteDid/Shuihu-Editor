@@ -57,8 +57,8 @@ exit /b 1
 
 if not exist bin mkdir bin
 
-set SRC=src\cli.c src\save.c src\fileio.c src\goods.c src\human.c src\tree.c src\textconv.c src\names.c src\names_data.c src\items_data.c src\human_data.c
-set SRG=src\ui.c  src\save.c src\fileio.c src\goods.c src\human.c src\tree.c src\textconv.c src\names.c src\names_data.c src\items_data.c src\human_data.c
+set SRC=src\cli.c src\save.c src\fileio.c src\goods.c src\human.c src\tree.c src\textconv.c src\goodsfile.c src\names.c src\names_data.c src\items_data.c src\human_data.c
+set SRG=src\ui.c  src\save.c src\fileio.c src\goods.c src\human.c src\tree.c src\textconv.c src\goodsfile.c src\names.c src\names_data.c src\items_data.c src\human_data.c
 
 echo [1/2] console  shuihu-edit-CLI-mingw.exe ...
 "%GCC%" -std=c99 -O2 -Wall -Wextra -static -o bin\shuihu-edit-CLI-mingw.exe %SRC%

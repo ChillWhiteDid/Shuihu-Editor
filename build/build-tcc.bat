@@ -77,13 +77,13 @@ if not exist bin mkdir bin
 echo [1/2] console  shuihu-edit-CLI.exe ...
 "%TCC%" -I "%WINAPI%" -o bin\shuihu-edit-CLI.exe ^
     src\cli.c src\save.c src\fileio.c src\goods.c src\human.c src\tree.c src\textconv.c ^
-    src\names.c src\names_data.c src\items_data.c src\human_data.c
+    src\goodsfile.c src\names.c src\names_data.c src\items_data.c src\human_data.c
 if errorlevel 1 exit /b 1
 
 echo [2/2] GUI      shuihu-edit-GUI.exe ...
 "%TCC%" -I "%WINAPI%" -o bin\shuihu-edit-GUI.exe ^
     src\ui.c src\save.c src\fileio.c src\goods.c src\human.c src\tree.c src\textconv.c ^
-    src\names.c src\names_data.c src\items_data.c src\human_data.c src\comdlg32.def
+    src\goodsfile.c src\names.c src\names_data.c src\items_data.c src\human_data.c src\comdlg32.def
 if errorlevel 1 exit /b 1
 
 echo.

@@ -307,9 +307,14 @@ int sh_set_field_raw(sh_save *s, int idx, sh_field f, uint16_t v)
     if (v > (uint16_t)sh_field_max(f)) return -2;
 
     u = &s->units[idx];
-    wr16(s->data, s->size, u->anchor + (size_t)s_field_rel[f], v);
-    u->f[f] = v;
-    if (f == SH_F_MOVE) write_move_bonus(s, u, (int)v);
+    {
+        uint16_t old = u->f[f];
+        wr16(s->data, s->size, u->anchor + (size_t)s_field_rel[f], v);
+        u->f[f] = v;
+        /* 只在移动值真的变化时折算加成：否则「重新应用同样的值」也会改 rel+36，
+         * 让「什么都没改」被误判为脏数据（save6 这类本身不自洽的存档会遇到）。 */
+        if (f == SH_F_MOVE && v != old) write_move_bonus(s, u, (int)v);
+    }
     return 0;
 }
 
@@ -338,7 +343,7 @@ int sh_set_field(sh_save *s, int idx, sh_field f, uint16_t v)
         return -3;
     }
 
-    if (f == SH_F_MOVE) write_move_bonus(s, u, (int)v);
+    if (f == SH_F_MOVE && v != old) write_move_bonus(s, u, (int)v);
     return 0;
 }
 

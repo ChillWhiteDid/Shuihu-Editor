@@ -15,6 +15,7 @@
 #include <stdlib.h>
 
 #include "save.h"
+#include "goodsfile.h"
 #include "names.h"
 #include "goods.h"
 #include "human.h"
@@ -45,8 +46,13 @@
 #define ID_BAK_OK     1029  /* 恢复备份窗口：恢复按钮 */
 #define ID_BAK_CANCEL 1031  /* 恢复备份窗口：取消按钮 */
 #define ID_RELOAD    1032  /* 重载存档按钮 */
+#define ID_GOODS     1033  /* 道具表按钮 */
+#define ID_GB_LIST   1034  /* 道具表窗口：列表 */
+#define ID_GB_EDIT0  1040  /* 道具表窗口：5 个字段输入框 */
+#define ID_GB_SAVE   1050  /* 道具表窗口：写入文件 */
+#define ID_GB_CLOSE  1051  /* 道具表窗口：关闭 */
 
-#define APP_VERSION  "v1.0"
+#define APP_VERSION  "v2.1"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -786,6 +792,259 @@ static void do_reload(void)
     status("已重新载入：%s", g.path);
 }
 
+
+/* ---------------- 道具表（GOODS.DAB）编辑窗口 ---------------- */
+
+static sh_goods s_gb;
+static int      s_gbLoaded;
+static HWND     s_gbWnd, s_gbList;
+static HWND     s_gbEdit[SH_GF_COUNT];
+static int      s_gbSel;            /* 当前选中道具 id，0 = 未选 */
+
+static int file_exists(const char *p)
+{
+    FILE *f = fopen(p, "rb");
+    if (f) { fclose(f); return 1; }
+    return 0;
+}
+
+/* 猜测 GOODS.DAB 位置：存档一般在 <游戏>\Save\，数据在 <游戏>\Data\ */
+static int goods_locate(char *out, size_t n)
+{
+    char dir[512], cand[600];
+    char *p;
+
+    if (!g.path[0]) return 0;
+    strncpy(dir, g.path, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = (char)0;
+    p = strrchr(dir, '\\');
+    if (p) *p = (char)0; else strcpy(dir, ".");
+
+    sprintf(cand, "%s\\..\\Data\\GOODS.DAB", dir);
+    if (file_exists(cand)) { strncpy(out, cand, n - 1); out[n - 1] = (char)0; return 1; }
+
+    sprintf(cand, "%s\\Data\\GOODS.DAB", dir);
+    if (file_exists(cand)) { strncpy(out, cand, n - 1); out[n - 1] = (char)0; return 1; }
+
+    sprintf(cand, "%s\\GOODS.DAB", dir);
+    if (file_exists(cand)) { strncpy(out, cand, n - 1); out[n - 1] = (char)0; return 1; }
+
+    return 0;
+}
+
+static void gb_fill_list(void)
+{
+    int id;
+    if (!s_gbList) return;
+    SendMessageA(s_gbList, LB_RESETCONTENT, 0, 0);
+    for (id = 1; id <= s_gb.count; id++) {
+        char line[220];
+        sprintf(line, "%3d  %-16s  攻%3d 防%3d 移%3d 体%3d 气%3d",
+                id, ansi(sh_item_name(id)),
+                sh_goods_get(&s_gb, id, SH_GF_ATK),
+                sh_goods_get(&s_gb, id, SH_GF_DEF),
+                sh_goods_get(&s_gb, id, SH_GF_MOVE),
+                sh_goods_get(&s_gb, id, SH_GF_HPMAX),
+                sh_goods_get(&s_gb, id, SH_GF_MPMAX));
+        SendMessageA(s_gbList, LB_ADDSTRING, 0, (LPARAM)ansi(line));
+    }
+}
+
+static void gb_show_item(int id)
+{
+    int f;
+    char buf[32];
+    s_gbSel = id;
+    if (id < 1) return;
+    for (f = 0; f < SH_GF_COUNT; f++) {
+        sprintf(buf, "%d", sh_goods_get(&s_gb, id, (sh_goods_field)f));
+        SetWindowTextA(s_gbEdit[f], buf);
+    }
+}
+
+/* 把输入框里的值写回内存（不落盘）；返回 0 表示有非法值 */
+static int gb_apply(void)
+{
+    int f;
+    if (s_gbSel < 1) return 1;
+    for (f = 0; f < SH_GF_COUNT; f++) {
+        char buf[32];
+        int v;
+        GetWindowTextA(s_gbEdit[f], buf, sizeof(buf));
+        v = atoi(buf);
+        if (sh_goods_set(&s_gb, s_gbSel, (sh_goods_field)f, v) != 0) {
+            char m[256];
+            sprintf(m, "字段「%s」的值 %d 超出允许范围（%d..%d）。",
+                    sh_goods_field_label((sh_goods_field)f), v,
+                    sh_goods_field_min((sh_goods_field)f),
+                    sh_goods_field_max((sh_goods_field)f));
+            msg("输入有误", m, MB_ICONWARNING);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void gb_commit(void)
+{
+    char bak[600], m[900];
+
+    if (!s_gbLoaded) return;
+    if (MessageBoxA(s_gbWnd,
+            ansi("即将写入 GOODS.DAB。\n\n"
+                 "这是**游戏本体数据**：改完后所有存档里的这件道具都会变，\n"
+                 "而不只是当前存档。程序会先自动备份原文件。\n\n确定写入吗？"),
+            ansi("写入道具表"), MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
+        return;
+
+    if (sh_goods_backup(&s_gb, bak, sizeof(bak)) != 0) {
+        msg("写入失败", "备份失败，已中止（原文件未改动）。", MB_ICONERROR);
+        return;
+    }
+    if (sh_goods_write(&s_gb) != 0) {
+        sprintf(m, "写入或校验失败。\n\n原文件备份在：\n%s", bak);
+        msg("写入失败", m, MB_ICONERROR);
+        return;
+    }
+    sprintf(m, "已写入并校验通过（%d 件道具）。\n\n备份：\n%s", s_gb.count, bak);
+    msg("完成", m, MB_ICONINFORMATION);
+}
+
+static LRESULT CALLBACK GoodsProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_CREATE: {
+        int f;
+        HWND lb = CreateWindowExA(0, "LISTBOX", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
+            12, 10, 360, 430, hwnd, (HMENU)(INT_PTR)ID_GB_LIST, NULL, NULL);
+        s_gbList = lb;
+        if (g.hFont) SendMessageA(lb, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
+        for (f = 0; f < SH_GF_COUNT; f++) {
+            HWND la = CreateWindowExA(0, "STATIC", ansi(sh_goods_field_label((sh_goods_field)f)),
+                WS_CHILD | WS_VISIBLE, 384, 16 + f * 30, 70, 20, hwnd, NULL, NULL, NULL);
+            s_gbEdit[f] = CreateWindowExA(0, "EDIT", "",
+                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+                456, 12 + f * 30, 80, 22, hwnd,
+                (HMENU)(INT_PTR)(ID_GB_EDIT0 + f), NULL, NULL);
+            if (g.hFont) {
+                SendMessageA(la, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(s_gbEdit[f], WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            }
+        }
+
+        {
+            HWND sv = CreateWindowExA(0, "BUTTON", ansi("写入文件"),
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                384, 178, 80, 28, hwnd, (HMENU)(INT_PTR)ID_GB_SAVE, NULL, NULL);
+            HWND cl = CreateWindowExA(0, "BUTTON", ansi("关闭"),
+                WS_CHILD | WS_VISIBLE, 470, 178, 66, 28, hwnd,
+                (HMENU)(INT_PTR)ID_GB_CLOSE, NULL, NULL);
+            HWND st = CreateWindowExA(0, "STATIC",
+                ansi("改的是游戏本体数据，所有存档一起受影响。\n"
+                     "切换道具时会先记住当前修改；写入前会再确认一次。"),
+                WS_CHILD | WS_VISIBLE | SS_LEFT,
+                384, 216, 180, 60, hwnd, NULL, NULL, NULL);
+            if (g.hFont) {
+                SendMessageA(sv, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(cl, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(st, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            }
+            (void)sv; (void)cl; (void)st;
+        }
+        return 0;
+    }
+    case WM_COMMAND:
+        if (LOWORD(wp) == ID_GB_LIST && HIWORD(wp) == LBN_SELCHANGE) {
+            int row = (int)SendMessageA(s_gbList, LB_GETCURSEL, 0, 0);
+            int newId = row + 1;
+            if (newId == s_gbSel) return 0;
+            if (!gb_apply()) {                     /* 非法就不切走 */
+                SendMessageA(s_gbList, LB_SETCURSEL, s_gbSel - 1, 0);
+                return 0;
+            }
+            gb_show_item(newId);
+            return 0;
+        }
+        if (LOWORD(wp) == ID_GB_SAVE) {
+            if (gb_apply()) gb_commit();
+            return 0;
+        }
+        if (LOWORD(wp) == ID_GB_CLOSE) { DestroyWindow(hwnd); return 0; }
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        s_gbWnd = NULL;
+        return 0;
+    }
+    return DefWindowProcA(hwnd, m, wp, lp);
+}
+
+static void do_goods(void)
+{
+    WNDCLASSA wc;
+    MSG msgLoop;
+    char path[600], m[900];
+
+    if (s_gbLoaded) { sh_goods_free(&s_gb); s_gbLoaded = 0; }
+
+    if (!goods_locate(path, sizeof(path))) {
+        msg("找不到道具表",
+            "没有找到 GOODS.DAB。\n\n"
+            "程序会在存档目录的上级 Data\\ 里找，例如：\n"
+            "  游戏目录\\Save\\save1.sav\n"
+            "  游戏目录\\Data\\GOODS.DAB\n\n"
+            "请确认游戏目录结构，或先打开一次存档再点这个按钮。",
+            MB_ICONINFORMATION);
+        return;
+    }
+    if (sh_goods_load(path, &s_gb) != 0) {
+        msg("读入失败", "GOODS.DAB 打不开或长度不对（应为 11 + n×198）。", MB_ICONERROR);
+        return;
+    }
+    s_gbLoaded = 1;
+    s_gbSel = 0;
+
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = GoodsProc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = "ShuiHuGoods";
+    RegisterClassA(&wc);
+
+    sprintf(m, "%s  ——  道具表", ansi("GOODS.DAB"));
+    s_gbWnd = CreateWindowExA(0, "ShuiHuGoods", m,
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        CW_USEDEFAULT, CW_USEDEFAULT, 600, 520,
+        g.hMain, NULL, wc.hInstance, NULL);
+    if (!s_gbWnd) { sh_goods_free(&s_gb); s_gbLoaded = 0; return; }
+
+    gb_fill_list();
+    if (s_gb.count > 0) {
+        SendMessageA(s_gbList, LB_SETCURSEL, 0, 0);
+        gb_show_item(1);
+    }
+
+    EnableWindow(g.hMain, FALSE);
+    ShowWindow(s_gbWnd, SW_SHOW);
+    UpdateWindow(s_gbWnd);
+
+    while (s_gbWnd && GetMessageA(&msgLoop, NULL, 0, 0) > 0) {
+        if (!IsDialogMessageA(s_gbWnd, &msgLoop)) {
+            TranslateMessage(&msgLoop);
+            DispatchMessageA(&msgLoop);
+        }
+    }
+    EnableWindow(g.hMain, TRUE);
+    SetActiveWindow(g.hMain);
+    sh_goods_free(&s_gb);
+    s_gbLoaded = 0;
+}
+
 static void do_about(void)
 {
     char m[900];
@@ -1056,6 +1315,7 @@ static void create_children(HWND hwnd)
     /* 第二行：技能相关 */
     mk("BUTTON", "查看技能树", BS_PUSHBUTTON, 282, 420, 96, 30, ID_TREE);
     mk("BUTTON", "解锁隐藏技", BS_PUSHBUTTON, 386, 420, 96, 30, ID_UNLOCK);
+    mk("BUTTON", "道具表",     BS_PUSHBUTTON, 490, 420, 90, 30, ID_GOODS);
 
     /* 第三行：关于 / 退出 */
     mk("BUTTON", "关于",       BS_PUSHBUTTON, 282, 454, 66, 30, ID_ABOUT);
@@ -1187,6 +1447,43 @@ static void do_uitest(HWND hwnd)
     fprintf(f, "case4 非法组合被拒并回滚: apply_ok=%d 内存 hp=%u 期望仍为 %d -> %s\r\n",
             ok, (unsigned)g.s.units[g.sel].f[SH_F_HP], got,
             (!ok && (int)g.s.units[g.sel].f[SH_F_HP] == got) ? "PASS" : "FAIL");
+
+    /* case9：GOODS.DAB 读/改/写/校验（只操作临时副本） */
+    {
+        char gp[600], tmp[MAX_PATH], tfile[MAX_PATH];
+        sh_goods gb;
+
+        if (goods_locate(gp, sizeof(gp)) && sh_goods_load(gp, &gb) == 0) {
+            int before = sh_goods_get(&gb, 22, SH_GF_MOVE), after = 0, rc;
+
+            GetTempPathA(sizeof(tmp), tmp);
+            sprintf(tfile, "%s_shuihu_goods_test.DAB", tmp);
+            CopyFileA(gp, tfile, FALSE);
+            sh_goods_free(&gb);
+
+            if (sh_goods_load(tfile, &gb) == 0) {
+                sh_goods_set(&gb, 22, SH_GF_MOVE, before + 2);
+                {
+                    char bak[600];
+                    rc = sh_goods_backup(&gb, bak, sizeof(bak));
+                    if (rc == 0) rc = sh_goods_write(&gb);
+                    sh_goods_free(&gb);
+                    if (sh_goods_load(tfile, &gb) == 0) {
+                        after = sh_goods_get(&gb, 22, SH_GF_MOVE);
+                        sh_goods_free(&gb);
+                    }
+                }
+                fprintf(f, "case9 道具表写读: 原=%d 写入=%d 重读=%d 件数=200 -> %s\r\n",
+                        before, before + 2, after,
+                        (rc == 0 && after == before + 2) ? "PASS" : "FAIL");
+            } else {
+                fprintf(f, "case9 道具表写读: SKIP（临时副本读不出）\r\n");
+            }
+            DeleteFileA(tfile);
+        } else {
+            fprintf(f, "case9 道具表写读: SKIP（找不到 GOODS.DAB）\r\n");
+        }
+    }
 
     /* case8：「关于」文本很长，不能靠 512 字节的 ansi() 缓冲转换 */
     {
@@ -1344,6 +1641,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
         case ID_TREE:    do_skilltree(); return 0;
         case ID_RESTORE: do_restore();   return 0;
         case ID_RELOAD:  do_reload();    return 0;
+        case ID_GOODS:   do_goods();     return 0;
         case ID_ABOUT:   do_about();     return 0;
         case ID_QUIT:    DestroyWindow(hwnd); return 0;
         case ID_LIST:
