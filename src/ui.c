@@ -46,7 +46,7 @@
 #define ID_BAK_CANCEL 1031  /* 恢复备份窗口：取消按钮 */
 #define ID_RELOAD    1032  /* 重载存档按钮 */
 
-#define APP_VERSION  "v2.6"
+#define APP_VERSION  "v1.0"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
