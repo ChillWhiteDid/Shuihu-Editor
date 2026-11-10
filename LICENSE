@@ -1,0 +1,40 @@
+MIT License
+
+Copyright (c) 2026 ChillWhiteDid
+
+--------------------------------------------------------------------
+适用范围（中文说明，与下方英文条款同样有效）
+
+本许可证**仅覆盖本仓库中的原创内容**：
+  - 源代码（src\ 下的全部文件）
+  - 构建脚本（build\ 下的批处理）
+  - 工具脚本（tools\ 下的 Python / PowerShell）
+  - 文档（README.md 及各子目录说明）
+  - Logo 图像与生成脚本（assets\logo\）
+
+本许可证**不覆盖**《水浒传之梁山好汉》游戏本体及其数据文件
+（ShuiHu.org、Data\GOODS.DAB、Data\HUMAN.HUM、图片与音乐等）。
+它们的版权归原权利人所有。本仓库既不包含、也不分发这些文件；
+使用本工具修改存档，需要你自行合法拥有该游戏。
+
+本工具会改写存档文件。作者不对存档损坏、游戏异常或任何后果作担保，
+请自行备份。详见下方"AS IS"条款。
+--------------------------------------------------------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

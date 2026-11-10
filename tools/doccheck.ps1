@@ -110,6 +110,14 @@ Ok "无旧名称残留" ($found.Count -eq 0) ("发现: " + ($found -join ', '))
 $dupTree = ([regex]::Matches($md, 'selftest\.ps1\s+回归自检')).Count
 Ok "目录树未重复列 selftest.ps1" ($dupTree -le 1) ("出现 $dupTree 次")
 
+
+# ---- 9. 许可证 ----------------
+$lic = Join-Path $root 'LICENSE'
+Ok "LICENSE 文件存在" (Test-Path $lic) "缺少 LICENSE"
+$licText = if (Test-Path $lic) { [IO.File]::ReadAllText($lic, [Text.Encoding]::UTF8) } else { '' }
+Ok "LICENSE 声明不含游戏数据" (($licText -match '不覆盖') -and ($licText -match 'MIT')) `
+    "LICENSE 需说明适用范围与许可证类型"
+Ok "README 链接到 LICENSE" ($md -match '\[`?LICENSE`?\]\(LICENSE\)') "README 未引用 LICENSE"
 Write-Host ""
 Write-Host ("结果: 通过 {0} 项，失败 {1} 项" -f $pass, $fail) `
     -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })

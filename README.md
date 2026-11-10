@@ -4,6 +4,7 @@
 数据格式依据见 [`../ShuiHu-分析报告.md`](../ShuiHu-分析报告.md) v1.34；实现约定见 [`../开发说明.md`](../开发说明.md)。
 
 **状态：V1.0 已在 Win98 实机验收通过**（读 / 改 / 写 / 备份 / 恢复全流程）。
+**许可证：[MIT](LICENSE)** —— 仅覆盖本仓库原创内容，不含游戏本体与游戏数据。
 
 > **平台限制：本仓库只在 Windows 上构建与运行**（Win98 / 2000 / XP / 10 / 11）。
 > 工具链为 TinyCC / MinGW-w64 的 Windows 版本，UI 是 Win32 原生控件，不使用 Linux/macOS 下可编译的跨平台库。
@@ -58,9 +59,10 @@ shuihu-edit/
 │  ├─ oracle.py              save.c 的 Python 孪生实现（无编译器时验证算法）
 │  ├─ selftest.ps1           回归自检（19 项）
 │  ├─ doctor.ps1             环境自检（依赖/数据/产物/样本）
-│  └─ doccheck.ps1           文档一致性自检（12 项断言）
+│  └─ doccheck.ps1           文档一致性自检（15 项断言）
 ├─ bin/                      构建输出（可随时删除，构建脚本会重建）
 ├─ assets/logo/              Logo 源文件与多尺寸导出（见其 README）
+├─ LICENSE                  MIT（仅覆盖原创内容，见「十八、许可」）
 ├─ .gitignore               排除构建产物与游戏数据生成物
 ├─ .gitattributes           换行与二进制资产处理
 └─ release/                  发布包（**不入库**，见「十四、仓库说明」；发布时自行打包）
@@ -816,6 +818,7 @@ bin\shuihu-edit-CLI.exe -verify "任意一个 .sav"
 | **跳过计数口径** | README「验证」↔ `selftest.ps1` 的输出文案 | 读者按"项"去对"组"的数字，算术对不上 |
 | **文件清单** | README 目录树 ↔ 仓库实际文件 | 文档提到已删除的文件 |
 | **章节编号** | README 自身 | 插节后编号跳号或重复 |
+| **许可证范围** | `LICENSE` ↔ README「十八、许可」 | 说了 MIT 却没写"不含游戏数据"，读者误以为游戏也可分发 |
 
 ### 一条命令检查
 
@@ -823,7 +826,7 @@ bin\shuihu-edit-CLI.exe -verify "任意一个 .sav"
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\doccheck.ps1
 ```
 
-输出 12 项断言，任一失败即退出码 1：
+输出 15 项断言，任一失败即退出码 1：
 
 ```
 [OK]   数据表：.gitignore 与 README 说法一致
@@ -838,8 +841,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\doccheck.ps1
 [OK]   跳过计数口径：README 与 selftest 一致
 [OK]   无旧名称残留
 [OK]   目录树未重复列 selftest.ps1
+[OK]   LICENSE 文件存在
+[OK]   LICENSE 声明不含游戏数据
+[OK]   README 链接到 LICENSE
 
-结果: 通过 12 项，失败 0 项
+结果: 通过 15 项，失败 0 项
 ```
 
 ### 什么时候跑
@@ -859,3 +865,33 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\doccheck.ps1
 
 所以它是"防低级不一致"的护栏，不是"文档正确性"的证明。
 真正的验收仍然是：**构建通过 + 回归 19 项通过 + 实机跑一遍**。
+
+## 十八、许可
+
+本仓库采用 **MIT License**（见 [`LICENSE`](LICENSE)）。
+
+### 覆盖范围
+
+| 内容 | 是否被 MIT 覆盖 | 说明 |
+|---|---|---|
+| `src\` 源代码 | ✅ | 随你用、改、分发、商用 |
+| `build\`、`tools\` 脚本 | ✅ | 同上 |
+| `README.md` 等文档 | ✅ | 同上 |
+| `assets\logo\` Logo 与生成脚本 | ✅ | 同上 |
+| **《水浒传之梁山好汉》游戏本体** | ❌ | 版权归原权利人 |
+| **`ShuiHu.org`、`GOODS.DAB`、`HUMAN.HUM` 等游戏数据** | ❌ | 本仓库不包含、不分发 |
+
+也就是说：**代码是自由的，游戏不是。**
+
+### 使用前请知悉
+
+- 本工具会**改写存档文件**。作者不对存档损坏、游戏异常或任何后果作担保，
+  请自行备份（工具本身在写入前会自动备份到 `backup_save\`，但这不构成保证）。
+- 分发本工具时，请一并保留 `LICENSE`；不要附带游戏数据文件。
+- 若要发布构建产物（exe），建议在发布页注明「请自备正版游戏」。
+
+### 想换许可证
+
+如果希望更严格（如 GPL-3.0 要求衍生作品同样开源）或更宽松（如 CC0），
+直接替换 `LICENSE` 文件、同步更新本节与文件头即可。
+唯一不可变的是"游戏数据不随仓库分发"这一事实——那是版权法，不是许可证能改变的。
