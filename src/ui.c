@@ -44,8 +44,9 @@
 #define ID_BAK_LIST   1028  /* 恢复备份窗口：备份列表 */
 #define ID_BAK_OK     1029  /* 恢复备份窗口：恢复按钮 */
 #define ID_BAK_CANCEL 1031  /* 恢复备份窗口：取消按钮 */
+#define ID_RELOAD    1032  /* 重载存档按钮 */
 
-#define APP_VERSION  "v2.5"
+#define APP_VERSION  "v2.6"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -93,6 +94,7 @@ static int  apply_current(int quiet);
 static void sync_baseline(void);
 static int  recompute_dirty(void);
 static void update_title(HWND hwnd, int dirty);
+static void do_about(void);
 static void build_ini_path(void);
 static void load_settings(void);
 static void remember_dir(const char *fileOrDir);
@@ -123,15 +125,23 @@ static void status(const char *fmt, ...)
 }
 
 /* 自检模式下不要弹模态框（无人点确定会卡死），改为记录下来供断言 */
-static char g_lastMsg[512];
+static char g_lastMsg[4096];
 
 static void msg(const char *title, const char *text, UINT flags)
 {
+    /* 注意：不能用 ansi() —— 它只有 512 字节静态缓冲，
+     * 「关于」这类长文本会被截断在双字节中间，显示成乱码。 */
+    static char body[4096];
+    static char head[256];
+
     strncpy(g_lastMsg, text ? text : "", sizeof(g_lastMsg) - 1);
     g_lastMsg[sizeof(g_lastMsg) - 1] = (char)0;
 
     if (g.uiTest || g.layoutTest) return;    /* 自检：不弹框 */
-    MessageBoxA(NULL, ansi(text), ansi(title), flags);
+
+    sh_utf8_to_acp(text ? text : "", body, sizeof(body));
+    sh_utf8_to_acp(title ? title : "", head, sizeof(head));
+    MessageBoxA(NULL, body, head, flags);
 }
 
 /* ------------------------------------------------------------------ */
@@ -389,7 +399,8 @@ static int commit_and_reload(int quiet)
     return 1;
 }
 
-static void reload_from_disk(void)
+/* 重新读入当前存档；成功返回 1，失败返回 0（并把 loaded 清掉，避免后续操作踩空） */
+static int reload_from_disk(void)
 {
     int keep = g.sel;
     sh_free(&g.s);
@@ -400,7 +411,14 @@ static void reload_from_disk(void)
         fill_list();
         if (keep >= 0 && keep < g.s.count) g.sel = keep;
         show_unit();
+        return 1;
     }
+    g.loaded = 0;
+    g.sel = -1;
+    g.dirty = 0;
+    update_title(g.hMain, 0);
+    if (g.hList) SendMessageA(g.hList, LB_RESETCONTENT, 0, 0);
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -751,6 +769,23 @@ static void do_restore(void)
 }
 
 
+/* 重载存档：丢弃内存中的改动，重新读文件 */
+static void do_reload(void)
+{
+    if (!g.loaded) { msg("提示", "请先打开存档。", MB_ICONINFORMATION); return; }
+
+    if (MessageBoxA(g.hMain,
+            ansi("所有未保存的更改会丢失。\n\n确定重新载入吗？"),
+            ansi("重载存档"), MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
+        return;
+
+    if (!reload_from_disk()) {
+        msg("重载失败", "无法重新读入这个存档文件，可能已被移动或删除。", MB_ICONERROR);
+        return;
+    }
+    status("已重新载入：%s", g.path);
+}
+
 static void do_about(void)
 {
     char m[900];
@@ -1013,16 +1048,22 @@ static void create_children(HWND hwnd)
 
     g.hHidden = mk("STATIC", "", SS_LEFT, 282, 366, 640, 18, ID_HIDDEN);
 
-    mk("BUTTON", "写入存档",   BS_PUSHBUTTON, 282, 390, 96, 30, ID_WRITE);
-    mk("BUTTON", "恢复备份",   BS_PUSHBUTTON, 386, 390, 90, 30, ID_RESTORE);
-    mk("BUTTON", "查看技能树", BS_PUSHBUTTON, 484, 390, 96, 30, ID_TREE);
-    mk("BUTTON", "解锁隐藏技", BS_PUSHBUTTON, 588, 390, 96, 30, ID_UNLOCK);
-    mk("BUTTON", "关于",       BS_PUSHBUTTON, 692, 390, 66, 30, ID_ABOUT);
-    mk("BUTTON", "退出",       BS_PUSHBUTTON, 766, 390, 66, 30, ID_QUIT);
+    /* 第一行：写入 / 恢复 / 重载 */
+    mk("BUTTON", "写入存档",   BS_PUSHBUTTON, 282, 386, 96, 30, ID_WRITE);
+    mk("BUTTON", "恢复备份",   BS_PUSHBUTTON, 386, 386, 90, 30, ID_RESTORE);
+    mk("BUTTON", "重载存档",   BS_PUSHBUTTON, 484, 386, 90, 30, ID_RELOAD);
+
+    /* 第二行：技能相关 */
+    mk("BUTTON", "查看技能树", BS_PUSHBUTTON, 282, 420, 96, 30, ID_TREE);
+    mk("BUTTON", "解锁隐藏技", BS_PUSHBUTTON, 386, 420, 96, 30, ID_UNLOCK);
+
+    /* 第三行：关于 / 退出 */
+    mk("BUTTON", "关于",       BS_PUSHBUTTON, 282, 454, 66, 30, ID_ABOUT);
+    mk("BUTTON", "退出",       BS_PUSHBUTTON, 356, 454, 66, 30, ID_QUIT);
 
     g.hStatus = mk("STATIC", "版本 " APP_VERSION " — 请先选择存档文件（可直接在左上角输入路径，再点「打开」）",
                    SS_LEFT | SS_LEFTNOWORDWRAP | SS_SUNKEN,
-                   12, 430, 916, 22, ID_STATUS);
+                   12, 488, 916, 22, ID_STATUS);
 
     /* 填充下拉列表：索引 = 道具 id（0 = 空） */
     for (i = 0; i < SH_SLOT_COUNT; i++) {
@@ -1146,6 +1187,19 @@ static void do_uitest(HWND hwnd)
     fprintf(f, "case4 非法组合被拒并回滚: apply_ok=%d 内存 hp=%u 期望仍为 %d -> %s\r\n",
             ok, (unsigned)g.s.units[g.sel].f[SH_F_HP], got,
             (!ok && (int)g.s.units[g.sel].f[SH_F_HP] == got) ? "PASS" : "FAIL");
+
+    /* case8：「关于」文本很长，不能靠 512 字节的 ansi() 缓冲转换 */
+    {
+        static char conv[4096];
+        int n8, nconv, q = 0, k;
+        do_about();                  /* 自检模式下只记录、不弹框 */
+        n8 = (int)strlen(g_lastMsg);
+        sh_utf8_to_acp(g_lastMsg, conv, sizeof(conv));
+        for (k = 0; conv[k]; k++) if (conv[k] == '?') q++;
+        nconv = k;
+        fprintf(f, "case8 关于文本转码: UTF-8=%d 字节 转换后=%d 字节 \"?\"=%d -> %s\r\n",
+                n8, nconv, q, (n8 > 512 && q == 0) ? "PASS" : "FAIL");
+    }
 
     /* case7：改「移动」应折算到 rel+36，使游戏重算后仍是目标值 */
     {
@@ -1289,6 +1343,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
         case ID_UNLOCK:  do_unlock();    return 0;
         case ID_TREE:    do_skilltree(); return 0;
         case ID_RESTORE: do_restore();   return 0;
+        case ID_RELOAD:  do_reload();    return 0;
         case ID_ABOUT:   do_about();     return 0;
         case ID_QUIT:    DestroyWindow(hwnd); return 0;
         case ID_LIST:
@@ -1373,7 +1428,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmd, int show)
     hwnd = CreateWindowExA(0, "ShuiHuEdit",
         ansi("水浒传之梁山好汉 — 存档编辑器  " APP_VERSION),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 960, 500,
+        CW_USEDEFAULT, CW_USEDEFAULT, 960, 551,
         NULL, NULL, hInst, NULL);
     if (!hwnd) return 1;
 
