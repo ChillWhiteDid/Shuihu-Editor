@@ -42,7 +42,7 @@
 #define ID_TREE_EDIT 1026   /* 技能树窗口里的文本框 */
 #define ID_TREE_CLOSE 1027  /* 技能树窗口的关闭按钮 */
 
-#define APP_VERSION  "v1.7"
+#define APP_VERSION  "v1.8"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -70,15 +70,22 @@ typedef struct {
     char    argPath[MAX_PATH];         /* 命令行传入的存档路径（可选） */
     HICON   hIconBig, hIconSmall;      /* 运行时从 logo.ico 加载 */
     char    iniPath[MAX_PATH];         /* exe 同目录的 shuihu-edit.ini */
+    int     dirty;                     /* 控件改了但还没写入存档 */
     char    lastDir[MAX_PATH];         /* 上次浏览/打开的目录 */
     char    iconPath[MAX_PATH];
     unsigned long iconErr;
     int     layoutTest;                /* -layouttest：自检控件矩形后退出 */
+    int     uiTest;                    /* -uitest：自检切换角色是否丢修改 */
 } App;
 
 static App g;
 
-/* 设置存取（定义在后面，这里先声明） */
+/* 前置声明（定义在后面） */
+static int  apply_fields(void);
+static int  apply_slots(void);
+static int  apply_money(void);
+static int  apply_current(int quiet);
+static void update_title(HWND hwnd, int dirty);
 static void build_ini_path(void);
 static void load_settings(void);
 static void remember_dir(const char *fileOrDir);
@@ -214,6 +221,27 @@ static int apply_fields(void)
     return 1;
 }
 
+/* 把界面上的改动写回内存（不落盘）。返回 0 表示校验失败（已弹提示）。 */
+static int apply_current(int quiet)
+{
+    if (!g.loaded || g.sel < 0) return 1;
+    (void)quiet;
+    if (!apply_fields()) return 0;
+    if (!apply_slots())  return 0;
+    if (!apply_money())  return 0;
+    g.dirty = 1;
+    return 1;
+}
+
+/* 标题栏加 * 表示有未保存修改 */
+static void update_title(HWND hwnd, int dirty)
+{
+    char t[256];
+    sprintf(t, "%s%s", ansi("水浒传之梁山好汉 — 存档编辑器  " APP_VERSION),
+            dirty ? "  *" : "");
+    if (hwnd) SetWindowTextA(hwnd, t);
+}
+
 static int apply_slots(void)
 {
     int i;
@@ -317,6 +345,12 @@ static void do_open(void)
     char path[MAX_PATH];
     GetWindowTextA(g.hPath, path, sizeof(path));
     if (!path[0]) { msg("提示", "请先填写或选择存档文件。", MB_ICONINFORMATION); return; }
+    if (g.dirty) {
+        if (MessageBoxA(g.hMain,
+                ansi("当前有未保存的修改，打开新存档会丢弃它们。\n\n确定继续吗？"),
+                ansi("未保存的修改"), MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
+            return;
+    }
     if (g.loaded) { sh_free(&g.s); g.loaded = 0; }
 
     if (sh_load(path, &g.s) != 0) {
@@ -326,6 +360,8 @@ static void do_open(void)
         return;
     }
     g.loaded = 1;
+    g.dirty = 0;
+    update_title(g.hMain, 0);
     strncpy(g.path, path, MAX_PATH - 1);
     g.path[MAX_PATH - 1] = '\0';
     remember_dir(path);
@@ -383,10 +419,10 @@ static void do_browse(void)
 static void do_write(void)
 {
     if (!g.loaded) { msg("提示", "请先打开存档。", MB_ICONINFORMATION); return; }
-    if (!apply_fields()) return;
-    if (!apply_slots()) return;
-    if (!apply_money()) return;
+    if (!apply_current(0)) return;
     if (!commit_and_reload(0)) return;
+    g.dirty = 0;
+    update_title(g.hMain, 0);
     reload_from_disk();
 }
 
@@ -640,6 +676,7 @@ static void do_skilltree(void)
         msg("提示", "请先打开存档并选择角色。", MB_ICONINFORMATION);
         return;
     }
+    apply_current(1);                 /* 让技能树反映界面上刚改的等级 */
     u = &g.s.units[g.sel];
     sh_build_tree_text(u, text, (int)sizeof(text));
 
@@ -799,6 +836,53 @@ static void dump_layout(HWND hwnd)
     fclose(s_lf);
     s_lf = NULL;
 }
+/* -uitest：模拟「改值 -> 切角色 -> 切回来」，验证修改没丢 */
+static void do_uitest(HWND hwnd)
+{
+    FILE *f = fopen("uitest.txt", "w");
+    int row0, row1, got, mem, ok;
+
+    if (!f) return;
+    if (!g.loaded || g.mapCount < 3) {
+        fprintf(f, "SKIP: 需要至少 3 个可编辑角色（当前 %d）\n", g.mapCount);
+        fclose(f);
+        return;
+    }
+
+    row0 = 0; row1 = 1;
+
+    /* 选中第 0 个角色 */
+    SendMessageA(g.hList, LB_SETCURSEL, row0, 0);
+    SendMessageA(hwnd, WM_COMMAND, MAKEWPARAM(ID_LIST, LBN_SELCHANGE), (LPARAM)g.hList);
+    fprintf(f, "case1 选中 unit=%d\r\n", (int)g.s.units[g.map[row0]].id);
+
+    /* 把槽 0 改成 177（人偶表里的道具 id） */
+    SendMessageA(g.hSlot[0], CB_SETCURSEL, 177, 0);
+
+    /* 切到第 1 个，再切回第 0 个 */
+    SendMessageA(g.hList, LB_SETCURSEL, row1, 0);
+    SendMessageA(hwnd, WM_COMMAND, MAKEWPARAM(ID_LIST, LBN_SELCHANGE), (LPARAM)g.hList);
+    SendMessageA(g.hList, LB_SETCURSEL, row0, 0);
+    SendMessageA(hwnd, WM_COMMAND, MAKEWPARAM(ID_LIST, LBN_SELCHANGE), (LPARAM)g.hList);
+
+    got = (int)SendMessageA(g.hSlot[0], CB_GETCURSEL, 0, 0);
+    mem = (int)g.s.units[g.map[row0]].slots[0];
+    ok  = (got == 177 && mem == 177);
+    fprintf(f, "case1 切换往返: 内存=%d 控件=%d 期望=177 -> %s\r\n",
+            mem, got, ok ? "PASS" : "FAIL");
+
+    /* case2：输入非法值（等级 99），切换应被拒绝、选择拨回 */
+    SetWindowTextA(g.hEdit[0], "99");
+    SendMessageA(g.hList, LB_SETCURSEL, row1, 0);
+    SendMessageA(hwnd, WM_COMMAND, MAKEWPARAM(ID_LIST, LBN_SELCHANGE), (LPARAM)g.hList);
+    got = (int)SendMessageA(g.hList, LB_GETCURSEL, 0, 0);
+    ok  = (g.sel == g.map[row0] && got == row0);
+    fprintf(f, "case2 非法等级时切换被拒: g.sel=%d 列表行=%d 期望行=%d -> %s\r\n",
+            (int)g.s.units[g.sel].id, got, row0, ok ? "PASS" : "FAIL");
+
+    fclose(f);
+}
+
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
 {
     switch (m) {
@@ -820,8 +904,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
         case ID_LIST:
             if (HIWORD(wp) == LBN_SELCHANGE) {
                 int sel = (int)SendMessageA(g.hList, LB_GETCURSEL, 0, 0);
-                if (sel >= 0 && sel < g.mapCount) g.sel = g.map[sel];
-                show_unit();
+                int newIdx = (sel >= 0 && sel < g.mapCount) ? g.map[sel] : -1;
+                if (newIdx != g.sel) {
+                    /* 切换前把控件里的值写回内存，否则切走再回来就丢了 */
+                    if (g.loaded && g.sel >= 0 && !apply_current(0)) {
+                        int row = -1, k;
+                        for (k = 0; k < g.mapCount; k++)
+                            if (g.map[k] == g.sel) { row = k; break; }
+                        if (row >= 0) SendMessageA(g.hList, LB_SETCURSEL, row, 0);
+                        return 0;
+                    }
+                    g.sel = newIdx;
+                    update_title(g.hMain, g.dirty);
+                    show_unit();
+                }
             }
             return 0;
         }
@@ -861,6 +957,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmd, int show)
         int n = 0;
         while (*p == ' ') p++;
         if (strncmp(p, "-layouttest", 11) == 0) { g.layoutTest = 1; p += 11; while (*p == ' ') p++; }
+        else if (strncmp(p, "-uitest", 7) == 0) { g.uiTest = 1; p += 7; while (*p == ' ') p++; }
         if (*p == '"') p++;
         while (*p && *p != '"' && n < MAX_PATH - 1) g.argPath[n++] = *p++;
         g.argPath[n] = '\0';
@@ -899,6 +996,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmd, int show)
 
     if (g.layoutTest) {
         dump_layout(hwnd);
+        if (g.loaded) sh_free(&g.s);
+        DestroyWindow(hwnd);
+        return 0;
+    }
+
+    if (g.uiTest) {
+        do_uitest(hwnd);
         if (g.loaded) sh_free(&g.s);
         DestroyWindow(hwnd);
         return 0;
