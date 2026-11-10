@@ -45,7 +45,7 @@
 #define ID_BAK_OK     1029  /* 恢复备份窗口：恢复按钮 */
 #define ID_BAK_CANCEL 1031  /* 恢复备份窗口：取消按钮 */
 
-#define APP_VERSION  "v2.4"
+#define APP_VERSION  "v2.5"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -989,10 +989,6 @@ static void create_children(HWND hwnd)
             mk("STATIC", lim, SS_LEFT, 434 + col * 300, 50 + row * 30, 60, 20, 0);
         }
     }
-
-    /* 「移动」是派生值（职业基础+加成+装备，每回合重算），单独加提示。
-     * 移动是第 13 个字段：col = 12/7 = 1，row = 12%7 = 5。 */
-    mk("STATIC", "※ 面板与棋盘同时生效", SS_LEFT, 796, 196, 150, 20, 0);
 
     /* 金钱（全局字段，放在第二列最后一行） */
     mk("STATIC", "金钱", SS_LEFT, 582, 230, 62, 20, 0);
