@@ -118,6 +118,15 @@ $licText = if (Test-Path $lic) { [IO.File]::ReadAllText($lic, [Text.Encoding]::U
 Ok "LICENSE 声明不含游戏数据" (($licText -match '不覆盖') -and ($licText -match 'MIT')) `
     "LICENSE 需说明适用范围与许可证类型"
 Ok "README 链接到 LICENSE" ($md -match '\[`?LICENSE`?\]\(LICENSE\)') "README 未引用 LICENSE"
+
+# ---- 10. 与外部报告版本一致 ----------------
+$report = Join-Path (Split-Path $root -Parent) 'ShuiHu-分析报告.md'
+if (Test-Path $report) {
+    $repTxt = [IO.File]::ReadAllText($report, [Text.Encoding]::UTF8)
+    $repVer = ([regex]::Match($repTxt, '\|\s*版本\s*\|\s*(v[0-9.]+)\s*\|')).Groups[1].Value
+    $refVer = ([regex]::Match($md, 'ShuiHu-分析报告\.md\)\s*(v[0-9.]+)')).Groups[1].Value
+    Ok "README 引用的报告版本与报告一致" ($repVer -ne '' -and $refVer -eq $repVer) "README 写 $refVer，报告实际 $repVer"
+}
 Write-Host ""
 Write-Host ("结果: 通过 {0} 项，失败 {1} 项" -f $pass, $fail) `
     -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })

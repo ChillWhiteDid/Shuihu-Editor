@@ -42,7 +42,7 @@
 #define ID_TREE_EDIT 1026   /* 技能树窗口里的文本框 */
 #define ID_TREE_CLOSE 1027  /* 技能树窗口的关闭按钮 */
 
-#define APP_VERSION  "v0.4"
+#define APP_VERSION  "v1.7"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */

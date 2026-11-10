@@ -1,9 +1,9 @@
 ﻿# shuihu-edit —— 《水浒传之梁山好汉》存档编辑器
 
 面向 **Windows 98 实机**与 Windows 10/11 的存档编辑工具。
-数据格式依据见 [`../ShuiHu-分析报告.md`](../ShuiHu-分析报告.md) v1.34；实现约定见 [`../开发说明.md`](../开发说明.md)。
+数据格式依据见 [`../ShuiHu-分析报告.md`](../ShuiHu-分析报告.md) v1.37；实现约定见 [`../开发说明.md`](../开发说明.md)。
 
-**状态：V1.0 已在 Win98 实机验收通过**（读 / 改 / 写 / 备份 / 恢复全流程）。
+**状态：V1.7**，Win98 实机验收通过（读 / 改 / 写 / 备份 / 恢复全流程）。
 **许可证：[MIT](LICENSE)** —— 仅覆盖本仓库原创内容，不含游戏本体与游戏数据。
 
 > **平台限制：本仓库只在 Windows 上构建与运行**（Win98 / 2000 / XP / 10 / 11）。
@@ -59,7 +59,7 @@ shuihu-edit/
 │  ├─ oracle.py              save.c 的 Python 孪生实现（无编译器时验证算法）
 │  ├─ selftest.ps1           回归自检（19 项）
 │  ├─ doctor.ps1             环境自检（依赖/数据/产物/样本）
-│  └─ doccheck.ps1           文档一致性自检（15 项断言）
+│  └─ doccheck.ps1           文档一致性自检（16 项断言）
 ├─ bin/                      构建输出（可随时删除，构建脚本会重建）
 ├─ assets/logo/              Logo 源文件与多尺寸导出（见其 README）
 ├─ LICENSE                  MIT（仅覆盖原创内容，见「十八、许可」）
@@ -827,7 +827,7 @@ bin\shuihu-edit-CLI.exe -verify "任意一个 .sav"
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\doccheck.ps1
 ```
 
-输出 15 项断言，任一失败即退出码 1：
+输出 16 项断言，任一失败即退出码 1：
 
 ```
 [OK]   数据表：.gitignore 与 README 说法一致
@@ -845,8 +845,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\doccheck.ps1
 [OK]   LICENSE 文件存在
 [OK]   LICENSE 声明不含游戏数据
 [OK]   README 链接到 LICENSE
+[OK]   README 引用的报告版本与报告一致
 
-结果: 通过 15 项，失败 0 项
+结果: 通过 16 项，失败 0 项
 ```
 
 ### 什么时候跑
