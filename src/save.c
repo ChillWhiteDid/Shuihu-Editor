@@ -289,6 +289,10 @@ static void write_move_bonus(sh_save *s, sh_unit *u, int target)
     if (bonus >  32767) bonus =  32767;
 
     wr16(s->data, s->size, u->anchor + SH_MOVE_BONUS_REL, (uint16_t)bonus);
+
+    /* 棋盘实际可走的是「剩余移动力」(unit+0x8C)，回合开始时才从 +0x8A 复制。
+     * 不改它，会出现「面板显示新值、棋盘还是旧值」直到下一回合。 */
+    wr16(s->data, s->size, u->anchor + SH_MOVE_LEFT_REL, (uint16_t)target);
 }
 
 /* 只做范围检查，不检查「当前 ≤ 上限」。
