@@ -41,8 +41,11 @@
 #define ID_TREE      1025   /* 查看技能树按钮 */
 #define ID_TREE_EDIT 1026   /* 技能树窗口里的文本框 */
 #define ID_TREE_CLOSE 1027  /* 技能树窗口的关闭按钮 */
+#define ID_BAK_LIST   1028  /* 恢复备份窗口：备份列表 */
+#define ID_BAK_OK     1029  /* 恢复备份窗口：恢复按钮 */
+#define ID_BAK_CANCEL 1031  /* 恢复备份窗口：取消按钮 */
 
-#define APP_VERSION  "v1.9"
+#define APP_VERSION  "v2.0"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -355,6 +358,8 @@ static void reload_from_disk(void)
     int keep = g.sel;
     sh_free(&g.s);
     if (sh_load(g.path, &g.s) == 0) {
+        g.dirty = 0;
+        update_title(g.hMain, 0);
         fill_list();
         if (keep >= 0 && keep < g.s.count) g.sel = keep;
         show_unit();
@@ -491,58 +496,222 @@ static void do_unlock(void)
 }
 
 /* 找到 backup_save 目录里最新的备份并恢复 */
-static void do_restore(void)
+/* ---------------- 恢复备份：从 backup_save 里选一份 ---------------- */
+
+#define SH_MAX_BAK 400
+
+static char     s_bakPath[SH_MAX_BAK][MAX_PATH];   /* 完整路径 */
+static char     s_bakText[SH_MAX_BAK][220];        /* 列表显示文字 */
+static FILETIME s_bakTime[SH_MAX_BAK];             /* 修改时间（排序用） */
+static int      s_bakCount;
+static int      s_bakChoice;                        /* -1 = 取消 */
+static HWND     s_bakWnd;
+
+static void ft_to_text(const FILETIME *ft, char *out)
+{
+    FILETIME lft;
+    SYSTEMTIME st;
+    FileTimeToLocalFileTime(ft, &lft);
+    FileTimeToSystemTime(&lft, &st);
+    sprintf(out, "%04d-%02d-%02d %02d:%02d:%02d",
+            (int)st.wYear, (int)st.wMonth, (int)st.wDay,
+            (int)st.wHour, (int)st.wMinute, (int)st.wSecond);
+}
+
+/* 枚举 <存档目录>\backup_save\*.sav，按修改时间倒序（最新在前） */
+static int collect_backups(void)
 {
     char dir[MAX_PATH], pat[MAX_PATH];
     WIN32_FIND_DATAA fd;
     HANDLE h;
-    char newest[MAX_PATH];
-    FILETIME best;
-    int found = 0;
+    int i, n = 0;
 
-    if (!g.loaded) { msg("提示", "请先打开存档。", MB_ICONINFORMATION); return; }
-
-    /* 备份目录 = 存档目录\backup_save */
     strncpy(dir, g.path, sizeof(dir) - 1);
-    dir[sizeof(dir) - 1] = '\0';
+    dir[sizeof(dir) - 1] = (char)0;
     {
         char *p = strrchr(dir, '\\');
-        if (p) *p = '\0'; else strcpy(dir, ".");
+        if (p) *p = (char)0; else strcpy(dir, ".");
     }
-    sprintf(pat, "%s\\backup_save\\*.sav", dir);
 
+    sprintf(pat, "%s\\backup_save\\*.sav", dir);
     h = FindFirstFileA(pat, &fd);
-    if (h == INVALID_HANDLE_VALUE) {
-        msg("没有备份", "backup_save 目录里没有找到备份文件。", MB_ICONINFORMATION);
-        return;
-    }
-    memset(&best, 0, sizeof(best));
+    if (h == INVALID_HANDLE_VALUE) return 0;
+
     do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            if (!found || CompareFileTime(&fd.ftLastWriteTime, &best) > 0) {
-                best = fd.ftLastWriteTime;
-                sprintf(newest, "%s\\backup_save\\%s", dir, fd.cFileName);
-                found = 1;
-            }
-        }
+        char when[32];
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (n >= SH_MAX_BAK) break;
+
+        ft_to_text(&fd.ftLastWriteTime, when);
+        sprintf(s_bakPath[n], "%s\\backup_save\\%s", dir, fd.cFileName);
+        sprintf(s_bakText[n], "%s   %s   (%lu 字节)",
+                when, fd.cFileName, (unsigned long)fd.nFileSizeLow);
+        s_bakTime[n] = fd.ftLastWriteTime;
+        n++;
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 
-    if (!found) { msg("没有备份", "backup_save 目录里没有找到备份文件。", MB_ICONINFORMATION); return; }
+    /* 插入排序：新的在前 */
+    for (i = 1; i < n; i++) {
+        char   tp[MAX_PATH];
+        char   tt[220];
+        FILETIME tf;
+        int    k = i - 1;
 
-    {
-        char m[900];
-        sprintf(m, "将用下面这个备份覆盖当前存档：\n\n%s\n\n继续吗？", newest);
-        if (MessageBoxA(NULL, ansi(m), ansi("确认恢复"), MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+        strcpy(tp, s_bakPath[i]);
+        strcpy(tt, s_bakText[i]);
+        tf = s_bakTime[i];
+        while (k >= 0 && CompareFileTime(&s_bakTime[k], &tf) < 0) {
+            strcpy(s_bakPath[k + 1], s_bakPath[k]);
+            strcpy(s_bakText[k + 1], s_bakText[k]);
+            s_bakTime[k + 1] = s_bakTime[k];
+            k--;
+        }
+        strcpy(s_bakPath[k + 1], tp);
+        strcpy(s_bakText[k + 1], tt);
+        s_bakTime[k + 1] = tf;
     }
 
-    if (!CopyFileA(newest, g.path, FALSE)) {
+    s_bakCount = n;
+    return n;
+}
+
+static LRESULT CALLBACK BakProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_CREATE: {
+        HWND lb = CreateWindowExA(0, "LISTBOX", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
+            12, 10, 556, 330, hwnd, (HMENU)(INT_PTR)ID_BAK_LIST, NULL, NULL);
+        HWND b1 = CreateWindowExA(0, "BUTTON", ansi("恢复"),
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            330, 352, 110, 30, hwnd, (HMENU)(INT_PTR)ID_BAK_OK, NULL, NULL);
+        HWND b2 = CreateWindowExA(0, "BUTTON", ansi("取消"),
+            WS_CHILD | WS_VISIBLE, 458, 352, 110, 30, hwnd,
+            (HMENU)(INT_PTR)ID_BAK_CANCEL, NULL, NULL);
+        HWND st = CreateWindowExA(0, "STATIC",
+            ansi("默认选中最新的一份；恢复会用备份覆盖当前存档。"),
+            WS_CHILD | WS_VISIBLE, 12, 356, 300, 20, hwnd, NULL, NULL, NULL);
+        if (g.hFont) {
+            SendMessageA(lb, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(b1, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(b2, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(st, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        }
+        (void)lb; (void)b1; (void)b2; (void)st;
+        return 0;
+    }
+    case WM_COMMAND:
+        if (LOWORD(wp) == ID_BAK_OK) {
+            int sel = (int)SendMessageA(GetDlgItem(hwnd, ID_BAK_LIST), LB_GETCURSEL, 0, 0);
+            s_bakChoice = (sel >= 0 && sel < s_bakCount) ? sel : -1;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        if (LOWORD(wp) == ID_BAK_CANCEL) {
+            s_bakChoice = -1;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        return 0;
+    case WM_CLOSE:
+        s_bakChoice = -1;
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        s_bakWnd = NULL;
+        return 0;
+    }
+    return DefWindowProcA(hwnd, m, wp, lp);
+}
+
+/* 弹窗选择备份；返回选中的下标，-1 表示取消 */
+static int pick_backup(void)
+{
+    WNDCLASSA wc;
+    MSG msgLoop;
+    HWND lb;
+    int i;
+
+    if (collect_backups() <= 0) return -1;
+
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = BakProc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = "ShuiHuBak";
+    RegisterClassA(&wc);
+
+    s_bakChoice = -1;
+    s_bakWnd = CreateWindowExA(0, "ShuiHuBak", ansi("恢复备份"),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        CW_USEDEFAULT, CW_USEDEFAULT, 600, 430,
+        g.hMain, NULL, wc.hInstance, NULL);
+    if (!s_bakWnd) return -1;
+
+    lb = GetDlgItem(s_bakWnd, ID_BAK_LIST);
+    if (lb) {
+        for (i = 0; i < s_bakCount; i++)
+            SendMessageA(lb, LB_ADDSTRING, 0, (LPARAM)ansi(s_bakText[i]));
+        SendMessageA(lb, LB_SETCURSEL, 0, 0);      /* 默认最新 */
+    }
+
+    EnableWindow(g.hMain, FALSE);
+    ShowWindow(s_bakWnd, SW_SHOW);
+    UpdateWindow(s_bakWnd);
+
+    while (s_bakWnd && GetMessageA(&msgLoop, NULL, 0, 0) > 0) {
+        if (!IsDialogMessageA(s_bakWnd, &msgLoop)) {
+            TranslateMessage(&msgLoop);
+            DispatchMessageA(&msgLoop);
+        }
+    }
+    EnableWindow(g.hMain, TRUE);
+    SetActiveWindow(g.hMain);
+    return s_bakChoice;
+}
+
+static void do_restore(void)
+{
+    int pick;
+    char m[900];
+
+    if (!g.loaded) { msg("提示", "请先打开存档。", MB_ICONINFORMATION); return; }
+
+    /* 1) 先找：目录不存在直接提示，不要弹出空窗口 */
+    if (collect_backups() <= 0) {
+        msg("没有备份", "backup_save 目录里没有找到备份文件。", MB_ICONINFORMATION);
+        return;
+    }
+
+    /* 2) 有未保存修改则先确认（恢复会丢弃它们） */
+    if (g.dirty) {
+        if (MessageBoxA(g.hMain,
+                ansi("当前有未保存的修改，恢复备份会丢弃它们。\n\n确定继续吗？"),
+                ansi("未保存的修改"), MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
+            return;
+    }
+
+    /* 3) 选择 */
+    pick = pick_backup();
+    if (pick < 0 || pick >= s_bakCount) return;
+
+    sprintf(m, "将用下面这份备份覆盖当前存档：\n\n%s\n\n确定恢复吗？", s_bakPath[pick]);
+    if (MessageBoxA(g.hMain, ansi(m), ansi("确认恢复"),
+                    MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
+        return;
+
+    if (!CopyFileA(s_bakPath[pick], g.path, FALSE)) {
         msg("恢复失败", "复制备份文件失败。", MB_ICONERROR);
         return;
     }
+    g.dirty = 0;
+    update_title(g.hMain, 0);
     reload_from_disk();
     msg("完成", "已从备份恢复。", MB_ICONINFORMATION);
 }
+
 
 static void do_about(void)
 {
@@ -928,6 +1097,75 @@ static void do_uitest(HWND hwnd)
     fprintf(f, "case4 非法组合被拒并回滚: apply_ok=%d 内存 hp=%u 期望仍为 %d -> %s\r\n",
             ok, (unsigned)g.s.units[g.sel].f[SH_F_HP], got,
             (!ok && (int)g.s.units[g.sel].f[SH_F_HP] == got) ? "PASS" : "FAIL");
+
+    /* case5：备份枚举 / 排序 / 恢复（临时目录里造 3 份内容不同的备份） */
+    {
+        char tmp[MAX_PATH], bak[MAX_PATH], src[MAX_PATH], saved[MAX_PATH];
+        int k, n;
+
+        GetTempPathA(sizeof(tmp), tmp);
+        sprintf(tmp, "%s_shuihubak_test", tmp);
+        CreateDirectoryA(tmp, NULL);
+        sprintf(bak, "%s\\backup_save", tmp);
+        CreateDirectoryA(bak, NULL);
+        sprintf(src, "%s\\test.sav", tmp);
+        strcpy(saved, g.path);
+        CopyFileA(g.path, src, FALSE);
+
+        for (k = 0; k < 3; k++) {
+            char one[MAX_PATH];
+            HANDLE hf;
+            DWORD wr = 0;
+
+            sprintf(one, "%s\\bak%d.sav", bak, k);
+            CopyFileA(src, one, FALSE);
+            hf = CreateFileA(one, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (hf != INVALID_HANDLE_VALUE) {
+                DWORD v = 111u * (DWORD)(k + 1);   /* 111 / 222 / 333 */
+                SetFilePointer(hf, 0x1B, NULL, FILE_BEGIN);
+                WriteFile(hf, &v, 4, &wr, NULL);
+                CloseHandle(hf);
+            }
+            Sleep(1100);   /* 拉开修改时间，验证排序 */
+        }
+
+        strcpy(g.path, src);
+        n = collect_backups();
+        fprintf(f, "case5 备份枚举: 找到 %d 份（期望 3），最新一份是 %s\r\n",
+                n, n > 0 ? s_bakPath[0] : "(无)");
+
+        if (n >= 3) {
+            DWORD want = 0;
+            int isNewest = (strstr(s_bakPath[0], "bak2.sav") != NULL);
+            CopyFileA(s_bakPath[0], g.path, FALSE);
+            {
+                HANDLE hf = CreateFileA(g.path, GENERIC_READ, 0, NULL, OPEN_EXISTING,
+                                        FILE_ATTRIBUTE_NORMAL, NULL);
+                if (hf != INVALID_HANDLE_VALUE) {
+                    DWORD rd = 0;
+                    SetFilePointer(hf, 0x1B, NULL, FILE_BEGIN);
+                    ReadFile(hf, &want, 4, &rd, NULL);
+                    CloseHandle(hf);
+                }
+            }
+            fprintf(f, "case5 默认选最新+恢复: 最新=bak2:%d 恢复后 money=%lu(期望 333) -> %s\r\n",
+                    isNewest, (unsigned long)want,
+                    (isNewest && want == 333) ? "PASS" : "FAIL");
+        } else {
+            fprintf(f, "case5 默认选最新+恢复: SKIP（备份不足）\r\n");
+        }
+
+        strcpy(g.path, saved);
+        for (k = 0; k < 3; k++) {
+            char one[MAX_PATH];
+            sprintf(one, "%s\\bak%d.sav", bak, k);
+            DeleteFileA(one);
+        }
+        RemoveDirectoryA(bak);
+        DeleteFileA(src);
+        RemoveDirectoryA(tmp);
+    }
 
     fclose(f);
 }
