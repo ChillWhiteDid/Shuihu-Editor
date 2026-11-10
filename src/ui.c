@@ -42,7 +42,7 @@
 #define ID_TREE_EDIT 1026   /* 技能树窗口里的文本框 */
 #define ID_TREE_CLOSE 1027  /* 技能树窗口的关闭按钮 */
 
-#define APP_VERSION  "v1.8"
+#define APP_VERSION  "v1.9"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -198,25 +198,49 @@ static int apply_fields(void)
 {
     char buf[64];
     int i;
+    uint16_t oldv[NFIELDS];
+    sh_unit *u;
 
     if (!g.loaded || g.sel < 0) return 0;
+    u = &g.s.units[g.sel];
 
+    /* 先记下旧值，任一步失败就整体回滚 */
+    for (i = 0; i < NFIELDS; i++) oldv[i] = u->f[kFields[i]];
+
+    /* 第一遍：只做范围检查就写入（不查「当前 ≤ 上限」）
+     * 因为一次同时改「当前值」和「上限」时，中途必然短暂越界。
+     * 例：气力 98 → 309，若先写当前值，此刻上限还是 98。 */
     for (i = 0; i < NFIELDS; i++) {
         long v;
         int rc;
         GetWindowTextA(g.hEdit[i], buf, sizeof(buf));
         v = strtol(buf, NULL, 10);
         if (v < 0) v = 0;
-        rc = sh_set_field(&g.s, g.sel, kFields[i], (uint16_t)v);
+        rc = sh_set_field_raw(&g.s, g.sel, kFields[i], (uint16_t)v);
         if (rc != 0) {
             char m[256];
-            sprintf(m, "字段「%s」的输入值 %ld 不被接受。\n\n%s",
-                    sh_field_label(kFields[i]), v,
-                    rc == -2 ? "超出允许范围（见各字段上限）。"
-                             : "会破坏「当前生命/气力 ≤ 上限」的关系。");
+            int k;
+            for (k = 0; k < i; k++) sh_set_field_raw(&g.s, g.sel, kFields[k], oldv[k]);
+            sprintf(m, "字段「%s」的输入值 %ld 超出允许范围（上限 %d）。",
+                    sh_field_label(kFields[i]), v, sh_field_max(kFields[i]));
             msg("输入有误", m, MB_ICONWARNING);
             return 0;
         }
+    }
+
+    /* 第二遍：检查最终状态是否合法（当前 ≤ 上限） */
+    if (u->f[SH_F_HP] > u->f[SH_F_HPMAX] || u->f[SH_F_MP] > u->f[SH_F_MPMAX]) {
+        char m[320];
+        for (i = 0; i < NFIELDS; i++) sh_set_field_raw(&g.s, g.sel, kFields[i], oldv[i]);
+        sprintf(m,
+            "这些数值放在一起不成立：\n\n"
+            "  生命 %u / 上限 %u\n  气力 %u / 上限 %u\n\n"
+            "「当前值」不能大于「上限」。\n"
+            "如果两个都改，请把上限也改到不小于当前值。",
+            (unsigned)u->f[SH_F_HP], (unsigned)u->f[SH_F_HPMAX],
+            (unsigned)u->f[SH_F_MP], (unsigned)u->f[SH_F_MPMAX]);
+        msg("输入有误", m, MB_ICONWARNING);
+        return 0;
     }
     return 1;
 }
@@ -879,6 +903,31 @@ static void do_uitest(HWND hwnd)
     ok  = (g.sel == g.map[row0] && got == row0);
     fprintf(f, "case2 非法等级时切换被拒: g.sel=%d 列表行=%d 期望行=%d -> %s\r\n",
             (int)g.s.units[g.sel].id, got, row0, ok ? "PASS" : "FAIL");
+
+    /* case3：同时把「气力」和「气力上限」改成 309（用户实际遇到的场景） */
+    SendMessageA(g.hList, LB_SETCURSEL, row0, 0);
+    SendMessageA(hwnd, WM_COMMAND, MAKEWPARAM(ID_LIST, LBN_SELCHANGE), (LPARAM)g.hList);
+    {
+        char lv[16];
+        sprintf(lv, "%u", (unsigned)g.s.units[g.sel].f[SH_F_LEVEL]);
+        SetWindowTextA(g.hEdit[0], lv);  /* case2 把等级留成了 99，先恢复 */
+    }
+    SetWindowTextA(g.hEdit[3], "309");   /* 气力 */
+    SetWindowTextA(g.hEdit[4], "309");   /* 气力上限 */
+    ok = apply_current(1);
+    fprintf(f, "case3 同改气力与上限到 309: apply_ok=%d 内存 mp=%u mpmax=%u -> %s\r\n",
+            ok, (unsigned)g.s.units[g.sel].f[SH_F_MP],
+            (unsigned)g.s.units[g.sel].f[SH_F_MPMAX],
+            (ok && g.s.units[g.sel].f[SH_F_MP] == 309 &&
+             g.s.units[g.sel].f[SH_F_MPMAX] == 309) ? "PASS" : "FAIL");
+
+    /* case4：非法组合（生命 500 > 上限 108）应被拒并回滚 */
+    got = (int)g.s.units[g.sel].f[SH_F_HP];
+    SetWindowTextA(g.hEdit[1], "500");   /* 生命 */
+    ok = apply_current(1);
+    fprintf(f, "case4 非法组合被拒并回滚: apply_ok=%d 内存 hp=%u 期望仍为 %d -> %s\r\n",
+            ok, (unsigned)g.s.units[g.sel].f[SH_F_HP], got,
+            (!ok && (int)g.s.units[g.sel].f[SH_F_HP] == got) ? "PASS" : "FAIL");
 
     fclose(f);
 }

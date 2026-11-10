@@ -272,6 +272,23 @@ int sh_field_max(sh_field f)
     }
 }
 
+/* 只做范围检查，不检查「当前 ≤ 上限」。
+ * 供批量写入使用：一次改「当前值 + 上限」时，中途必然出现 cur > max，
+ * 逐字段检查会误拒；调用方应在全部写完后自行校验最终状态。 */
+int sh_set_field_raw(sh_save *s, int idx, sh_field f, uint16_t v)
+{
+    sh_unit *u;
+
+    if (!s || idx < 0 || idx >= s->count) return -1;
+    if (f < 0 || f >= SH_F_COUNT) return -1;
+    if (v > (uint16_t)sh_field_max(f)) return -2;
+
+    u = &s->units[idx];
+    wr16(s->data, s->size, u->anchor + (size_t)s_field_rel[f], v);
+    u->f[f] = v;
+    return 0;
+}
+
 int sh_set_field(sh_save *s, int idx, sh_field f, uint16_t v)
 {
     sh_unit *u;
