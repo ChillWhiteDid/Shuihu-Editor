@@ -45,7 +45,7 @@
 #define ID_BAK_OK     1029  /* 恢复备份窗口：恢复按钮 */
 #define ID_BAK_CANCEL 1031  /* 恢复备份窗口：取消按钮 */
 
-#define APP_VERSION  "v2.0"
+#define APP_VERSION  "v2.1"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -73,7 +73,9 @@ typedef struct {
     char    argPath[MAX_PATH];         /* 命令行传入的存档路径（可选） */
     HICON   hIconBig, hIconSmall;      /* 运行时从 logo.ico 加载 */
     char    iniPath[MAX_PATH];         /* exe 同目录的 shuihu-edit.ini */
-    int     dirty;                     /* 控件改了但还没写入存档 */
+    int     dirty;                     /* 与载入快照相比是否有改动 */
+    uint8_t *base;                     /* 载入时的字节快照（判断 dirty 用） */
+    size_t   baseSize;
     char    lastDir[MAX_PATH];         /* 上次浏览/打开的目录 */
     char    iconPath[MAX_PATH];
     unsigned long iconErr;
@@ -88,6 +90,8 @@ static int  apply_fields(void);
 static int  apply_slots(void);
 static int  apply_money(void);
 static int  apply_current(int quiet);
+static void sync_baseline(void);
+static int  recompute_dirty(void);
 static void update_title(HWND hwnd, int dirty);
 static void build_ini_path(void);
 static void load_settings(void);
@@ -256,8 +260,33 @@ static int apply_current(int quiet)
     if (!apply_fields()) return 0;
     if (!apply_slots())  return 0;
     if (!apply_money())  return 0;
-    g.dirty = 1;
+    /* 注意：不能无条件置 1 —— 切换角色也会走到这里，
+     * 那样「什么都没改」也会被当成有未保存修改。改为按快照比对。 */
+    recompute_dirty();
     return 1;
+}
+
+/* 记录当前存档内容为 baseline（载入/写入成功后调用） */
+static void sync_baseline(void)
+{
+    if (g.base) { free(g.base); g.base = NULL; g.baseSize = 0; }
+    if (!g.loaded || !g.s.data || g.s.size == 0) return;
+    g.base = (uint8_t *)malloc(g.s.size);
+    if (!g.base) return;
+    memcpy(g.base, g.s.data, g.s.size);
+    g.baseSize = g.s.size;
+}
+
+/* 与 baseline 逐字节比较，返回是否有改动；同时刷新标题 */
+static int recompute_dirty(void)
+{
+    int d = 0;
+    if (g.base && g.loaded && g.s.data && g.s.size == g.baseSize) {
+        d = (memcmp(g.s.data, g.base, g.s.size) != 0);
+    }
+    g.dirty = d;
+    update_title(g.hMain, d);
+    return d;
 }
 
 /* 标题栏加 * 表示有未保存修改 */
@@ -358,6 +387,7 @@ static void reload_from_disk(void)
     int keep = g.sel;
     sh_free(&g.s);
     if (sh_load(g.path, &g.s) == 0) {
+        sync_baseline();
         g.dirty = 0;
         update_title(g.hMain, 0);
         fill_list();
@@ -389,6 +419,7 @@ static void do_open(void)
         return;
     }
     g.loaded = 1;
+    sync_baseline();
     g.dirty = 0;
     update_title(g.hMain, 0);
     strncpy(g.path, path, MAX_PATH - 1);
@@ -1097,6 +1128,38 @@ static void do_uitest(HWND hwnd)
     fprintf(f, "case4 非法组合被拒并回滚: apply_ok=%d 内存 hp=%u 期望仍为 %d -> %s\r\n",
             ok, (unsigned)g.s.units[g.sel].f[SH_F_HP], got,
             (!ok && (int)g.s.units[g.sel].f[SH_F_HP] == got) ? "PASS" : "FAIL");
+
+    /* case6：没改任何东西时，切换人物不应被标记为"有未保存修改" */
+    {
+        int d0, d1, d2;
+        reload_from_disk();          /* 先丢掉前面用例造成的改动，重置 baseline */
+        SendMessageA(g.hList, LB_SETCURSEL, row0, 0);
+        SendMessageA(hwnd, WM_COMMAND, MAKEWPARAM(ID_LIST, LBN_SELCHANGE), (LPARAM)g.hList);
+        d0 = recompute_dirty();
+        SendMessageA(g.hList, LB_SETCURSEL, row1, 0);
+        SendMessageA(hwnd, WM_COMMAND, MAKEWPARAM(ID_LIST, LBN_SELCHANGE), (LPARAM)g.hList);
+        d1 = recompute_dirty();
+        fprintf(f, "case6 空切换不置脏: 切换前=%d 切换后=%d -> %s\r\n",
+                d0, d1, (d0 == 0 && d1 == 0) ? "PASS" : "FAIL");
+
+        /* 改一个值 -> 应为脏；再改回原值 -> 应为干净 */
+        {
+            char orig[32], tmpv[32];
+            unsigned v;
+            HWND ed = g.hEdit[0];
+            GetWindowTextA(ed, orig, sizeof(orig));
+            v = (unsigned)g.s.units[g.sel].f[SH_F_LEVEL];
+            sprintf(tmpv, "%u", v > 1 ? v - 1 : v + 1);
+            SetWindowTextA(ed, tmpv);
+            apply_current(1);
+            d1 = recompute_dirty();
+            SetWindowTextA(ed, orig);
+            apply_current(1);
+            d2 = recompute_dirty();
+            fprintf(f, "case6 改了=脏/改回=干净: 改后=%d 改回=%d -> %s\r\n",
+                    d1, d2, (d1 == 1 && d2 == 0) ? "PASS" : "FAIL");
+        }
+    }
 
     /* case5：备份枚举 / 排序 / 恢复（临时目录里造 3 份内容不同的备份） */
     {
