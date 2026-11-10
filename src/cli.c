@@ -457,13 +457,23 @@ int main(int argc, char **argv)
 
     if (strcmp(cmd, "-tree") == 0) {
         static char text[8192];
-        int idx, id;
+        int i, id, hits = 0;
         if (argc < 4) { usage(); return 2; }
         id = atoi(argv[3]);
-        idx = sh_find_unit(&s, id);
-        if (idx < 0) { printf("存档里没有类型 id = %d 的角色（%s）\n", id, sh_char_name(id)); sh_free(&s); return 1; }
-        sh_build_tree_text(&s.units[idx], text, (int)sizeof(text));
-        printf("%s", text);
+        /* 同 id 可能有多个记录（实测存档里存在两条史進），逐个列出而不是报错 */
+        for (i = 0; i < s.count; i++) {
+            if ((int)s.units[i].id != id) continue;
+            hits++;
+            if (hits > 1) printf("\r\n===== 同 id 的第 %d 条记录（等级 %u）=====\r\n",
+                                hits, (unsigned)s.units[i].f[SH_F_LEVEL]);
+            sh_build_tree_text(&s.units[i], text, (int)sizeof(text));
+            printf("%s", text);
+        }
+        if (hits == 0) {
+            printf("存档里没有类型 id = %d 的角色（%s）\n", id, sh_char_name(id));
+            sh_free(&s);
+            return 1;
+        }
         sh_free(&s);
         return 0;
     }

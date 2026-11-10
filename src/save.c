@@ -108,7 +108,7 @@ static void find_hidden(const uint8_t *p, size_t n, sh_unit *u)
     if (to > n) to = n;
 
     for (i = from; i + 4 <= to; i++) {
-        if (p[i] == 0x3C && p[i + 1] == 0x00 && p[i + 2] == 0x03 && p[i + 3] == 0x00) {
+        if (p[i] == 0x3C && p[i + 1] == 0x00) {   /* 后两字节可变，只认 3C 00 */
             end = i;
             start = end;
             while (start > base && (end - start) < SH_HIDDEN_MAX && p[start - 1] <= 1) {
@@ -345,8 +345,7 @@ int sh_unlock_hidden(sh_save *s, int idx, int slots)
     if (to > s->size) to = s->size;
 
     for (i = from; i + 4 <= to; i++) {
-        if (s->data[i] == 0x3C && s->data[i + 1] == 0x00 &&
-            s->data[i + 2] == 0x03 && s->data[i + 3] == 0x00) {
+        if (s->data[i] == 0x3C && s->data[i + 1] == 0x00) {   /* 后两字节可变 */
 
             size_t cnt, clear_from, cleared;
 
