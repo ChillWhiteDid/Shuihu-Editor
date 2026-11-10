@@ -45,7 +45,7 @@
 #define ID_BAK_OK     1029  /* 恢复备份窗口：恢复按钮 */
 #define ID_BAK_CANCEL 1031  /* 恢复备份窗口：取消按钮 */
 
-#define APP_VERSION  "v2.2"
+#define APP_VERSION  "v2.3"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -713,7 +713,7 @@ static int pick_backup(void)
 static void do_restore(void)
 {
     int pick;
-    char m[900];
+    char m[1600];
 
     if (!g.loaded) { msg("提示", "请先打开存档。", MB_ICONINFORMATION); return; }
 
@@ -761,10 +761,14 @@ static void do_about(void)
         "数值上限依据：\n"
         "  等级≤30、攻击等≤255、生命/气力≤510\n"
         "      —— 程序内的夹取（反编译 FUN_00408540）\n"
-        "  移动≤255\n"
-        "      —— 单位对象 +0x8A 按单字节写入\n"
+        "  移动≤255 —— 派生值，见下方说明\n"
         "  经验/升级所需≤65535、金钱≤4294967295\n"
         "      —— 仅受字段宽度限制，非游戏规则\n\n"
+        "关于「移动」：它是每回合重算出来的派生值\n"
+        "  移动 = 职业基础 + 单位加成 + 装备加成\n"
+        "  所以写入后，游戏里要过一回合才生效\n"
+        "  （当回合仍显示旧值）\n"
+        "  本工具已把差值写进加成，重算后即为你设置的值\n\n"
         "Win98 兼容构建：无 comctl32、无额外 DLL。",
         sh_char_name_count(), sh_skill_name_count(), sh_item_count());
     msg("关于", m, MB_ICONINFORMATION);
@@ -985,6 +989,10 @@ static void create_children(HWND hwnd)
             mk("STATIC", lim, SS_LEFT, 434 + col * 300, 50 + row * 30, 60, 20, 0);
         }
     }
+
+    /* 「移动」是派生值（职业基础+加成+装备，每回合重算），单独加提示。
+     * 移动是第 13 个字段：col = 12/7 = 1，row = 12%7 = 5。 */
+    mk("STATIC", "※ 改后次回合生效", SS_LEFT, 796, 196, 150, 20, 0);
 
     /* 金钱（全局字段，放在第二列最后一行） */
     mk("STATIC", "金钱", SS_LEFT, 582, 230, 62, 20, 0);

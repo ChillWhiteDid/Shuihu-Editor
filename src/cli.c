@@ -449,6 +449,11 @@ int main(int argc, char **argv)
             sh_free(&s);
             return 1;
         }
+
+        if (f == SH_F_MOVE) {
+            printf("[提示] 移动是每回合重算的派生值（职业基础+加成+装备），\n");
+            printf("       游戏里要过一回合才生效；本工具已把差值折算进 rel+36。\n");
+        }
         if (!do_yes) { printf("[干跑] 未加 -y，未改动任何文件。\n"); sh_free(&s); return 0; }
         rc = commit(&s, path, 1);
         sh_free(&s);
