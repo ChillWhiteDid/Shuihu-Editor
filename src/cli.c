@@ -361,6 +361,31 @@ int main(int argc, char **argv)
                 if (!sh_is_playable(&s.units[i])) continue;
                 print_unit(&s.units[i]);
             }
+            {
+                /* 同一 type id 可能有多条记录（实测存档里史進有 2 条），提示一下 */
+                int a, b, any = 0;
+                for (a = 0; a < s.count; a++) {
+                    int n = 0;
+                    if (!sh_is_playable(&s.units[a])) continue;
+                    for (b = 0; b < s.count; b++) {
+                        if (s.units[b].id == s.units[a].id) n++;
+                    }
+                    if (n > 1) {
+                        int first = 1, c;
+                        for (c = 0; c < a; c++) {
+                            if (s.units[c].id == s.units[a].id) { first = 0; break; }
+                        }
+                        if (first) {
+                            printf("\n  [注意] type id %d（%s）在存档里有 %d 条记录，\n",
+                                   (int)s.units[a].id, sh_char_name((int)s.units[a].id), n);
+                            printf("上面的表会重复列出；用 -tree %d 可逐条查看差异。\n",
+                                   (int)s.units[a].id);
+                            any = 1;
+                        }
+                    }
+                }
+                (void)any;
+            }
             if (do_meta) {
                 printf("\n  -- 其他单位（NPC/杂兵）--\n");
                 for (i = 0; i < s.count; i++) {
