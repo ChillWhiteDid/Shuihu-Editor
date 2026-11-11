@@ -13,7 +13,7 @@
 # 样本自动查找顺序:
 #   1. 命令行参数 -Save / -Save6 / -SkillSave / -ProbeRef
 #   2. 环境变量 SHUIHU_DATA 指向的目录（游戏根目录，含 Save\ 与 水浒传之梁山好汉修改器\）
-#   3. 仓库默认布局：<repo>\..\..\ShuiHu\
+#   3. 仓库默认布局：<repo>\..\ShuiHu\
 #
 # 找不到样本不报错：相关检查标记为"跳过"，其余照常执行。
 
@@ -39,7 +39,7 @@ Remove-Item (Join-Path $test 'backup_save') -Recurse -Force -ErrorAction Silentl
 # ---------------------------------------------------------------- 样本定位
 if (-not $DataDir) {
     try {
-        $guess = Join-Path (Split-Path (Split-Path $root -Parent) -Parent) 'ShuiHu'
+        $guess = Join-Path (Split-Path $root -Parent) 'ShuiHu'
         if (Test-Path $guess) { $DataDir = $guess }
     } catch { }
 }
@@ -61,7 +61,7 @@ $save9Path = Find-Sample $Save  '水浒传之梁山好汉修改器\save9.sav'
 $save6Path = Find-Sample $Save6 'Save\save6.sav'
 $skillPath = Find-Sample $SkillSave '水浒传之梁山好汉修改器\必杀技\save0——学习前.sav'
 if (-not $ProbeRef) {
-    $p = Join-Path (Split-Path $root -Parent) 'out\probe_stats.sav'
+    $p = Join-Path (Split-Path $root -Parent) 'ShuiHu-Re\out\probe_stats.sav'
     if (Test-Path $p) { $ProbeRef = $p }
 }
 

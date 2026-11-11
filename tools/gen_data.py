@@ -19,6 +19,7 @@ r"""
         SH_ITEM_NAMES[]   道具名（200 条）
         SH_ITEM_EQ[]      分类码
         SH_ITEM_MAJOR[]   大类
+SH_ITEM_CACHE[][4] 装备缓存四元组：+76 攻击 / +82 / +84 防御 / +90
     src/human_data.c
         SH_CLASS_OFF[]    72 个职业技能表的分段偏移
         SH_SK_SID[]       技能字符串 id
@@ -155,7 +156,26 @@ def emit_items(goods_path, src_dir):
             if mv < -128: mv = -128
             if mv > 127: mv = 127
             fh.write("    %d,%s" % (mv, "" if (i + 1) % 20 else "\n"))
-        fh.write("\n};\n")
+        fh.write("\n};\n\n")
+        # 装备缓存四元组：槽 +2/+4/+6/+8 分别从 GOODS +76/+82/+84/+90 复制
+        fh.write("const unsigned short SH_ITEM_CACHE[][4] = {\n")
+        for i in range(count):
+            o2 = GOODS_HEADER + i * GOODS_STRIDE
+            v = [struct.unpack_from("<H", data, o2 + k)[0] for k in (76, 82, 84, 90)]
+            fh.write("    { %5d, %5d, %5d, %5d },   /* %d */\n" % (v[0], v[1], v[2], v[3], i + 1))
+        fh.write("};\n")
+        # 说明文本（记录 +26 起，Big5，NUL 结尾）—— 里面直接写着效果
+        fh.write("\nconst char *SH_ITEM_DESC[] = {\n")
+        for i in range(count):
+            off2 = GOODS_HEADER + i * GOODS_STRIDE
+            r2 = data[off2:off2 + GOODS_STRIDE]
+            raw2 = r2[26:60].split(b"\x00")[0]
+            try:
+                dz = raw2.decode("big5")
+            except UnicodeDecodeError:
+                dz = raw2.decode("big5", errors="replace")
+            fh.write("    %s,   /* %d */\n" % (c_literal(dz), i + 1))
+        fh.write("};\n")
     print("items      :", count)
     return out_path
 
@@ -251,9 +271,9 @@ def resolve_game_exe(explicit):
             return p
         print("SHUIHU_DATA 已设置但其中没有 ShuiHu.org:", env)
 
-    # 回退：仓库默认布局 <repo>\..\..\ShuiHu\（与 tools/selftest.ps1 的探测一致）
+    # 回退：仓库默认布局 <repo>\..\ShuiHu\（与 tools/selftest.ps1 的探测一致）
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    guess = os.path.abspath(os.path.join(here, "..", "..", "ShuiHu"))
+    guess = os.path.abspath(os.path.join(here, "..", "ShuiHu"))
     p = os.path.join(guess, "ShuiHu.org")
     if os.path.isfile(p):
         print("使用默认布局:", guess)
@@ -284,6 +304,7 @@ def write_stub(src_dir):
         fh.write("const char *SH_ITEM_NAMES[] = { 0 };\n")
         fh.write("const unsigned char SH_ITEM_EQ[] = { 0 };\n")
         fh.write("const unsigned char SH_ITEM_MAJOR[] = { 0 };\n")
+        fh.write("const unsigned short SH_ITEM_CACHE[][4] = { { 0, 0, 0, 0 } };\n")
 
     with open(os.path.join(src_dir, "human_data.c"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write("/* 由 tools/gen_data.py --stub 生成（空表）。 */\n")

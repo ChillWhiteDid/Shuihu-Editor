@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $root = Split-Path $PSScriptRoot -Parent
-$report = Join-Path (Split-Path $root -Parent) 'ShuiHu-分析报告.md'
+$report = Join-Path (Split-Path $root -Parent) 'ShuiHu-Re\ShuiHu-分析报告.md'
 
 if (-not (Test-Path $report)) { throw "找不到分析报告: $report" }
 $repTxt = [IO.File]::ReadAllText($report, [Text.Encoding]::UTF8)

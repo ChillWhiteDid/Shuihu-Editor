@@ -96,7 +96,7 @@ if ($missing.Count -gt 0) {
 # ---------------------------------------------------------------- 游戏数据
 $dataDir = $env:SHUIHU_DATA
 if (-not $dataDir) {
-    $guess = Join-Path (Split-Path (Split-Path $root -Parent) -Parent) 'ShuiHu'
+    $guess = Join-Path (Split-Path $root -Parent) 'ShuiHu'
     if (Test-Path $guess) { $dataDir = $guess }
 }
 if ($dataDir -and (Test-Path $dataDir)) {
@@ -137,6 +137,18 @@ if ($samples.Count -ge 3) {
     Line "回归测试样本" $null "$($samples.Count) 个（只能跑部分检查）"
 } else {
     Line "回归测试样本" $false "无 —— 可用 -Save 指定任意存档跑通用检查"
+}
+
+# ---------------------------------------------------------------- Win98 镜像
+$img = Join-Path $root '.exclude\ShuiHu_Dosbox_win98\windows98.img'
+$imgTool = Join-Path $root 'tools\imgfs.py'
+if ((Test-Path $img) -and (Test-Path $imgTool)) {
+    $imgGB = (Get-Item $img).Length / 1GB
+    Line "Win98 镜像" $true ("{0}（{1:N1} GB；tools\imgfs.py 可用）" -f $img, $imgGB)
+} elseif (Test-Path $img) {
+    Line "Win98 镜像" $null "$img（缺 tools\imgfs.py）"
+} else {
+    Line "Win98 镜像" $null "无（可选；有 DOSBox Win98 时才用）"
 }
 
 # ---------------------------------------------------------------- 结论

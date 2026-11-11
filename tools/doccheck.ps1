@@ -87,7 +87,7 @@ foreach ($r in $refs) {
 Ok "README 引用的仓库内文件都存在" ($missing.Count -eq 0) ("缺: " + ($missing -join ', '))
 
 # ---- 5. 章节编号连续、无重复 ----
-$nums = @('零','一','二','三','四','五','六','七','八','九','十','十一','十二','十三','十四','十五','十六','十七','十八')
+$nums = @('零','一','二','三','四','五','六','七','八','九','十','十一','十二','十三','十四','十五','十六','十七','十八','十九')
 $heads = [regex]::Matches($md, '(?m)^## ([零一二三四五六七八九十]+)、') | ForEach-Object { $_.Groups[1].Value }
 $expected = $nums[0..($heads.Count - 1)]
 Ok "章节编号连续（零…）" (($heads -join ',') -eq ($expected -join ',')) ("实际: " + ($heads -join ','))
@@ -120,7 +120,7 @@ Ok "LICENSE 声明不含游戏数据" (($licText -match '不覆盖') -and ($licT
 Ok "README 链接到 LICENSE" ($md -match '\[`?LICENSE`?\]\(LICENSE\)') "README 未引用 LICENSE"
 
 # ---- 10. 与外部报告版本一致 ----------------
-$report = Join-Path (Split-Path $root -Parent) 'ShuiHu-分析报告.md'
+$report = Join-Path (Split-Path $root -Parent) 'ShuiHu-Re\ShuiHu-分析报告.md'
 if (Test-Path $report) {
     $repTxt = [IO.File]::ReadAllText($report, [Text.Encoding]::UTF8)
     $repVer = ([regex]::Match($repTxt, '\|\s*版本\s*\|\s*(v[0-9.]+)\s*\|')).Groups[1].Value
