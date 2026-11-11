@@ -1,0 +1,28 @@
+{
+  "name": "win9x",
+  "description": "Windows 9x system directories and boot files. Writes and deletes are denied; reads are allowed.",
+  "dirs": [
+    "WINDOWS",
+    "PROGRAM FILES",
+    "PROGRA~1"
+  ],
+  "root_files": [
+    "IO.SYS",
+    "MSDOS.SYS",
+    "COMMAND.COM",
+    "AUTOEXEC.BAT",
+    "CONFIG.SYS",
+    "SYSTEM.1ST",
+    "SUHDLOG.DAT",
+    "PDOS.DEF",
+    "MSDOS.---",
+    "BOOTLOG.TXT",
+    "BOOTLOG.PRV",
+    "SETUPLOG.TXT",
+    "DETLOG.TXT",
+    "FRUNLOG.TXT",
+    "NETLOG.TXT",
+    "SCANDISK.LOG"
+  ],
+  "attr_mask": 12
+}

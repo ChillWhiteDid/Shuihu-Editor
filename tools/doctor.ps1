@@ -141,14 +141,27 @@ if ($samples.Count -ge 3) {
 
 # ---------------------------------------------------------------- Win98 镜像
 $img = Join-Path $root '.exclude\ShuiHu_Dosbox_win98\windows98.img'
-$imgTool = Join-Path $root 'tools\imgfs.py'
-if ((Test-Path $img) -and (Test-Path $imgTool)) {
-    $imgGB = (Get-Item $img).Length / 1GB
-    Line "Win98 镜像" $true ("{0}（{1:N1} GB；tools\imgfs.py 可用）" -f $img, $imgGB)
-} elseif (Test-Path $img) {
-    Line "Win98 镜像" $null "$img（缺 tools\imgfs.py）"
-} else {
+$imgShim = Join-Path $root 'tools\imgfs.py'
+$imgVend = Join-Path $root 'tools\_vendor\fat16img\fat16img.py'
+$imgLive = Join-Path (Split-Path (Split-Path $root -Parent) -Parent) 'tools\fat16img\fat16img.py'
+if (-not (Test-Path $img)) {
     Line "Win98 镜像" $null "无（可选；有 DOSBox Win98 时才用）"
+} elseif (-not (Test-Path $imgShim) -or -not (Test-Path $imgVend)) {
+    Line "Win98 镜像" $false "$img（缺 tools\imgfs.py 或 tools\_vendor\fat16img\fat16img.py）"
+} else {
+    $imgGB = (Get-Item $img).Length / 1GB
+    Line "Win98 镜像" $true ("{0}（{1:N1} GB；shim + 内置 core 可用）" -f $img, $imgGB)
+    if (Test-Path $imgLive) {
+        $hLive = (Get-FileHash -LiteralPath $imgLive -Algorithm SHA256).Hash
+        $hVend = (Get-FileHash -LiteralPath $imgVend -Algorithm SHA256).Hash
+        if ($hLive -eq $hVend) {
+            Line "内置 core 同步" $true "与 REA\tools\fat16img 一致"
+        } else {
+            Line "内置 core 同步" $null "副本落后于 REA\tools\fat16img（见 tools\_vendor\fat16img\README.md）"
+        }
+    } else {
+        Line "内置 core 同步" $true "无实时核心，独立仓库模式（用内置副本）"
+    }
 }
 
 # ---------------------------------------------------------------- 结论

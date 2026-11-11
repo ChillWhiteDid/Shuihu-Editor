@@ -65,9 +65,10 @@ shuihu-edit/
 │  ├─ selftest.ps1           回归自检（19 项）
 │  ├─ doctor.ps1             环境自检（依赖/数据/产物/样本）
 │  ├─ doccheck.ps1           文档一致性自检（16 项断言）
-│  ├─ imgfs.py               Win98 FAT16 镜像离线读写（黑名单/journal）
-│  ├─ vmtest.ps1             Win98 镜像测试工作流（pull/push/sync/probe）
-│  ├─ imgfs-test.ps1         克隆镜像上的 42 项自动断言
+│  ├─ imgfs.py               shim → FAT16 核心（默认镜像 + win9x 预设）
+│  ├─ _vendor\fat16img\      核心快照（单独 clone 时的回退，见其 README）
+│  ├─ vmtest.ps1             ShuiHu 镜像测试工作流（pull/push/sync/probe）
+│  ├─ imgfs-test.ps1         克隆镜像上的自动断言（全样本 42 项）
 │  └─ reportcheck.ps1        对账提醒（提交关键词 ↔ 分析报告）
 ├─ bin/                      构建输出（可随时删除，构建脚本会重建）
 ├─ assets/logo/              Logo 源文件与多尺寸导出（见其 README）
@@ -1126,7 +1127,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\reportcheck.ps1 -Since
 ## 十九、Win98 镜像直连（测试工作流）
 
 > 目标：agent 不启动 Win98，直接读写 `windows98.img` 里的存档 / EXE / GOODS.DAB；
-> 用户只启动 DOSBox 看结果。工具：`tools\imgfs.py` + `tools\vmtest.ps1`。
+> 用户只启动 DOSBox 看结果。ShuiHu 入口：`tools\imgfs.py`（shim）+ `tools\vmtest.ps1`（适配器）；
+> 核心查找顺序：`..\..\tools\fat16img\fat16img.py`（工作区实时核心）→ `tools\_vendor\fat16img\fat16img.py`（仓库自带快照）。
+> 单独 clone 本仓库也能用；`tools\doctor.ps1` 会校验两份是否一致。
 
 ### 镜像事实（2026-11-11 只读勘察）
 
@@ -1147,7 +1150,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\reportcheck.ps1 -Since
 | 属性 | 任意 `SYSTEM` 属性或卷标项 |
 
 其余路径（`/SH`、`/SH/SAVE`、`/SH/DATA`、`/RELEASE`、`/MY DOCUMENTS`、`/RECYCLED`、根目录新文件…）可读写。
-名单是 `imgfs.py` 顶部常量，v1 无运行时绕过。
+名单在 `..\..\tools\fat16img\presets\win9x.json`（仓库快照另存一份在
+`tools\_vendor\fat16img\presets\win9x.json`）；ShuiHu 的 `tools\imgfs.py` shim 默认启用该预设，
+通用核心默认不启用。
 
 ### 安全模型
 
@@ -1163,7 +1168,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\reportcheck.ps1 -Since
 # 1) 复制测试镜像 + 生成 CD1-test.conf
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\vmtest.ps1 clone
 
-# 2) 42 项自动断言（只碰 windows98.test.img）
+# 2) 自动断言（全样本 42 项；当前克隆 save9 为探针时 41/0，跳过已知锚点项）
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\imgfs-test.ps1
 
 # 3) 人工启动一次克隆 Win98（脚本末尾会打印确切命令与预期）
