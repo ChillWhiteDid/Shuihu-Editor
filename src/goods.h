@@ -36,6 +36,9 @@ int sh_item_major(int id);
 /* 道具的移动加成（有符号，可为负） */
 int sh_item_move(int id);
 
+/* 道具说明文本（记录 +26 起的 Big5，构建时转 UTF-8）；无说明返回 "" */
+const char *sh_item_desc(int id);
+
 /* id(1 基) -> 归一化类别（SH_KIND_*） */
 int sh_item_kind(int id);
 

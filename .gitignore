@@ -1,4 +1,4 @@
-﻿# ---- 构建产物 ----
+# ---- 构建产物 ----
 bin/
 release/
 *.obj
@@ -6,7 +6,8 @@ release/
 *.exe
 *.tmp
 layout.txt
-shuihu-edit.ini     # 运行时设置（记住上次目录），不入库
+# 运行时设置（记住上次目录），不入库
+shuihu-edit.ini
 
 # ---- 由游戏数据生成的源码（见 README「构建前提」）----
 # 这三个文件由 tools/gen_data.py 从游戏本体提取生成，含游戏内文本，
@@ -32,3 +33,6 @@ tools/__pycache__/
 .idea/
 Thumbs.db
 desktop.ini
+
+# ---- 本地临时排除区（自行放东西，不入库）----
+.exclude/

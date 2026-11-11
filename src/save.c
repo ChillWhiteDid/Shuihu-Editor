@@ -358,6 +358,56 @@ int sh_set_money(sh_save *s, uint32_t v)
     return 0;
 }
 
+/* 槽位记录 = 10 字节：+0 道具 id、+2 攻击缓存、+6 防御缓存 */
+static size_t slot_cache_off(const sh_save *s, int idx, int slot, int which)
+{
+    const sh_unit *u;
+    size_t base;
+    if (!s || idx < 0 || idx >= s->count) return 0;
+    if (slot < 0 || slot >= SH_SLOT_COUNT) return 0;
+    u = &s->units[idx];
+    base = u->anchor + SH_SLOT_BASE + (size_t)slot * SH_SLOT_STRIDE;
+    return base + (which == SH_CACHE_DEF ? 6 : 2);
+}
+
+int sh_slot_cache_get(const sh_save *s, int idx, int slot, int which)
+{
+    size_t off;
+    if (!s || !s->data) return 0;
+    if (slot < 0 || slot >= SH_SLOT_COUNT) return 0;
+    off = slot_cache_off(s, idx, slot, which);
+    if (off + 1 >= s->size) return 0;
+    return (int)rd16(s->data, s->size, off);
+}
+
+int sh_slot_cache_set(sh_save *s, int idx, int slot, int which, int v)
+{
+    size_t off;
+    if (!s || !s->data) return -1;
+    if (slot < 0 || slot >= SH_SLOT_COUNT) return -1;
+    if (v < 0 || v > 65535) return -2;
+    off = slot_cache_off(s, idx, slot, which);
+    if (off + 1 >= s->size) return -1;
+    wr16(s->data, s->size, off, (uint16_t)v);
+    return 0;
+}
+
+/* 一次性写槽位的 4 个装备缓存字段（+2/+4/+6/+8），对应 GOODS +76/+82/+84/+90 */
+int sh_slot_cache_set4(sh_save *s, int idx, int slot, const unsigned short v[4])
+{
+    size_t off;
+    int k;
+
+    if (!s || !s->data || !v) return -1;
+    if (slot < 0 || slot >= SH_SLOT_COUNT) return -1;
+    off = slot_cache_off(s, idx, slot, SH_CACHE_ATK);
+    if (off + 6 + 1 >= s->size) return -1;
+
+    /* +2 攻击、+4、+6 防御、+8 —— 相对 +2 依次 +0/+2/+4/+6 */
+    for (k = 0; k < 4; k++) wr16(s->data, s->size, off + (size_t)k * 2, (uint16_t)v[k]);
+    return 0;
+}
+
 int sh_set_slot(sh_save *s, int idx, int slot, uint8_t item_id)
 {
     sh_unit *u;

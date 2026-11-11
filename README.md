@@ -1,7 +1,7 @@
-﻿# shuihu-edit —— 《水浒传之梁山好汉》存档编辑器
+# shuihu-edit —— 《水浒传之梁山好汉》存档编辑器
 
 面向 **Windows 98 实机**与 Windows 10/11 的存档编辑工具。
-数据格式依据见 [`../ShuiHu-分析报告.md`](../ShuiHu-分析报告.md) v1.43；实现约定见 [`../开发说明.md`](../开发说明.md)。
+数据格式依据见 [`../ShuiHu-Re/ShuiHu-分析报告.md`](../ShuiHu-Re/ShuiHu-分析报告.md) v1.50；实现约定见 [`../ShuiHu-Re/开发说明.md`](../ShuiHu-Re/开发说明.md)。
 
 **状态：V1.0**，Win98 实机验收通过（读 / 改 / 写 / 备份 / 恢复 / 重载全流程）。
 
@@ -35,6 +35,9 @@ bin\shuihu-edit-GUI.exe
 发布用的打包在 `release\`（已被 `.gitignore` 排除，需自行拷贝分发）；
 图标源文件在 `assets\logo\logo.ico`。
 
+> 要在 **Win98 镜像**里验证修改效果，见「[十九、Win98 镜像直连](#十九win98-镜像直连测试工作流)」：
+> agent 直接读写 `windows98.img`，不需要手工编辑镜像，你只启动 DOSBox 看结果。
+
 ## 一、目录结构
 
 ```
@@ -62,6 +65,9 @@ shuihu-edit/
 │  ├─ selftest.ps1           回归自检（19 项）
 │  ├─ doctor.ps1             环境自检（依赖/数据/产物/样本）
 │  ├─ doccheck.ps1           文档一致性自检（16 项断言）
+│  ├─ imgfs.py               Win98 FAT16 镜像离线读写（黑名单/journal）
+│  ├─ vmtest.ps1             Win98 镜像测试工作流（pull/push/sync/probe）
+│  ├─ imgfs-test.ps1         克隆镜像上的 42 项自动断言
 │  └─ reportcheck.ps1        对账提醒（提交关键词 ↔ 分析报告）
 ├─ bin/                      构建输出（可随时删除，构建脚本会重建）
 ├─ assets/logo/              Logo 源文件与多尺寸导出（见其 README）
@@ -401,8 +407,8 @@ python tools\gen_data.py <ShuiHu.org 路径> src
 > 标题栏出现 `*` 表示"有未保存的修改"——判定方式是**与载入时的快照逐字节比较**，
 > 所以没改动不会误报，改了又改回原值也会自动变回干净。
 > 输入不合法时（如等级 99）切换会被拒绝并保留输入。
-> 打开别的存档或恢复备份前，若有未保存修改会先确认。
-6. 「恢复备份」→ 弹出列表，列出 `backup_save\` 下所有备份（按时间倒序，**默认选中最新的**），选好后确认恢复
+> 打开别的存档或恢复存档前，若有未保存修改会先确认。
+6. 「恢复存档」→ 弹出列表，列出 `backup_save\` 下所有备份（按时间倒序，**默认选中最新的**），选好后确认恢复
 7. 「查看技能树」→ 按学习等级列出该职业全部必杀技，隐藏技另列并显示领悟状态
 8. 「解锁隐藏技」→ 清零该角色的隐藏技标志块（**不消耗道具**）
 
@@ -413,7 +419,7 @@ python tools\gen_data.py <ShuiHu.org 路径> src
 
 ```
 [存档修改] [道具编辑]        ← 页签（左侧，当前页按钮置灰）
-[写入存档] [恢复备份] [重载存档]
+[写入存档] [恢复存档] [重载存档]
 [查看技能树] [解锁隐藏技]
 [关于] [退出]
 ```
@@ -422,6 +428,99 @@ python tools\gen_data.py <ShuiHu.org 路径> src
 
 - **存档修改**：角色列表 + 11 个字段 + 7 个槽位
 - **道具编辑**：200 件道具列表 + 5 个字段 + 写入按钮
+
+### 控件 ID 分块（改界面时必读）
+
+控件 ID 按「页面/窗口」分块，每块留足空位：
+
+| 区间 | 归属 | 现状 |
+|---|---|---|
+| `10000 – 14999` | 存档修改页 | 路径/列表/6 个按钮/字段/槽位/分解标签 |
+| `15000 – 19999` | 道具编辑页 | 列表/7 字段/3 按钮/标签/说明 |
+| `20000 – 20499` | 两页共用 | 状态栏、两个页签 |
+| `21000 – 22999` | 子窗口 | 技能树 / 恢复存档 / 装备加成 |
+
+`is_goods_id()` 只判断 `15000 <= id < 20000`，一句话决定页面归属。
+**新增控件必须放进对应块**，不要插进别的块的空位。
+
+> 这条规则是踩了三次坑换来的：`ID_GB_SAVE` 撞 `ID_MONEY`、
+> `ID_GB_DESC` 撞范围标签、`ID_CACHE` 落进道具页区间导致按钮跑到另一页。
+> 现在 `-uitest` 的 case19（句柄唯一）与 case21（页面归属 / 分块契约）
+> 会拦住同类错误。
+
+### 攻击力/防御力的三个层次（重要）
+
+面板上的「攻击力/防御力」**不是**一个可以直接持久修改的数，而是游戏算出来的结果：
+
+```text
+GOODS.DAB +76/+84   道具的原始值
+      │  只在【道具被获得】时复制
+      ▼
+存档 槽 +2/+6       装备加成缓存（本工具可改）
+      │  每次重算（装备/卸下/升级/回合）
+      ▼
+存档 rel+8/+10      面板显示值（存盘，读档不重算）
+```
+
+所以角色页上「攻击」那一行右边会显示 `装备+132` —— 这是三件装备的缓存之和，
+你可以据此反推基础值（基础 = 面板 − 装备）。
+
+| 想改什么 | 改哪里 | 是否持久 |
+|---|---|---|
+| 装备带来的攻击/防御 | 「装备加成」按钮（槽缓存） | ✅ 每次重算都计入 |
+| 让某个数值**立刻**显示 | 直接改面板「攻击力」字段 | ❌ 下次重算被覆盖 |
+| 道具本身的攻击/防御 | 道具页 `+76/+84` | ⚠️ 只影响**新获得**的道具 |
+
+> 基础值由游戏按职业+等级计算，**不存盘**，工具改不了
+> （要改它就得改 `HUMAN.HUM` 职业表，那是全局改动）。
+
+### 装备加成（直接改面板攻击/防御）
+
+存档页的「装备加成」按钮打开一个窗口，编辑 3 个装备槽里缓存的：
+
+| 槽位 | 攻击（槽 `+2`） | 防御（槽 `+6`） |
+|---|---|---|
+| 武器槽 | ✓ | ✓ |
+| 衣服槽 | ✓ | ✓ |
+| 帽子槽 | ✓ | ✓ |
+
+**为什么需要它**：游戏算面板时（`FUN_00408540` 第 105-106 行）
+
+```c
+*(short *)(unit + 0x48) += psVar5[1];   /* 攻击 += 槽 +2 */
+*(short *)(unit + 0x4a) += psVar5[3];   /* 防御 += 槽 +6 */
+```
+
+**读的是槽位里的缓存，不是 `GOODS.DAB`**。所以：
+
+- 改 `GOODS.DAB` 的攻击力 → **不刷新**这份缓存，面板不变
+- 想改装备带来的攻击/防御 → 在这里改（或者修掉损坏的缓存）
+
+面板值 = 基础 + 三个装备槽之和，最后各自夹到 255。
+
+> **生效时机**：游戏**读档时不重算面板**（存档里存的就是算好的值）。
+> - 改这里的缓存 → 要回游戏**卸下再装备**一次才显示
+> - 想**读档立刻看到** → 直接改上方的「攻击力/防御力」字段
+>   （但下次重算会被缓存覆盖，所以两个一起改最稳）
+
+> `GOODS.DAB` 的 `+76/+84` 只在**该道具被获得时**复制进槽位缓存
+> （REA 调用链：`FUN_00417F30` 拾取 → `FUN_004093F0` 写缓存）；
+> 道具在背包↔装备栏间搬移时缓存**跟着记录走**，不会按当前 GOODS 重算。
+> 所以改 GOODS 对**已持有**的道具无效。
+
+### 字段悬停提示
+
+道具页的 7 个字段、以及「装备加成」窗口的 6 个输入框，鼠标悬停会弹出说明，
+例如：
+
+```
+攻击力（GOODS +76）
+只在道具被获得时复制进槽位缓存。
+对已经拿在手里的道具，改这里无效——请用存档页的「装备加成」。
+```
+
+实现上**不依赖 comctl32**（Win98 基线）：`ShuiHuTip` 是一个自绘的 `WS_POPUP` 窗口，
+由 200ms 定时器轮询光标位置决定显示/隐藏。
 
 ### 道具表（GOODS.DAB）
 
@@ -433,7 +532,22 @@ python tools\gen_data.py <ShuiHu.org 路径> src
 | 防御力 | `+84` | 0..255 |
 | 移动加成 | `+104`（有符号） | −30..30 |
 | 最大体力 | `+110` | 0..510 |
+| 敏捷 | `+96` | 0..255 |
+| 必殺 | `+100` | 0..255 |
 | 最大气力 | `+112` | 0..510 |
+
+另外，选中道具时会显示**说明文本**（来自记录 `+26` 的 Big5 原文，构建时转 UTF-8），
+例如「人肉包子 → 回復氣力全滿」「打狗棒 → 攻擊力加30，可提升」。
+
+说明下面还有一行**一致性提示**：程序从说明里认出「攻擊力加 N」这类句式，
+与对应字段比对；不一致时显示
+
+```
+说明写 30，字段是 99 —— 可能不匹配
+```
+
+只认「XX加N」这种明确句式，避免把「3回合內命中率提升255點」这类状态效果误判成装备数值。
+改完字段后忘了同步说明时，这一行会立刻提醒。
 
 ::: warning
 改的是 **`GOODS.DAB` 本身**，所有存档一起受影响。程序在写入前会：
@@ -444,6 +558,12 @@ python tools\gen_data.py <ShuiHu.org 路径> src
 
 `GOODS.DAB` 的位置按存档目录推断：`<游戏>\Save\x.sav` → `<游戏>\Data\GOODS.DAB`。
 找不到时会提示，不会瞎猜乱写。
+
+### 恢复道具表
+
+「写入道具表」右边是「恢复道具表」：列出 `GOODS.DAB` 同目录下的
+`GOODS.DAB_YYYYMMDD-HHMMSS.bak`，**按时间倒序、默认选中最新的**，
+选定后确认覆盖并重新载入（和存档页的「恢复存档」同一套交互）。
 
 命令行等价用法：
 
@@ -465,6 +585,7 @@ shuihu-edit-CLI -fields                  打印字段偏移表
 shuihu-edit-CLI -money  <save> <值>                    [-y]
 shuihu-edit-CLI -set    <save> <角色id> <字段> <值>     [-y]
 shuihu-edit-CLI -slot   <save> <角色id> <槽0-6> <道具id> [-y]
+shuihu-edit-CLI -cache  <save> <角色id> <槽0-6> atk|def <值> [-y]   ← 改装备加成缓存（面板攻击/防御的真正来源）
 shuihu-edit-CLI -unlock-hidden <save> <角色id>          [-y]
 shuihu-edit-CLI -tree <save> <角色id>          查看技能树
 ```
@@ -547,7 +668,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\selftest.ps1
 其中最关键的一项：
 
 > 用编辑器把武龙五项属性改成 111/122/133/144/155，
-> 产物与**游戏已读取并正确显示过**的 `../out/probe_stats.sav` **逐字节相同**。
+> 产物与**游戏已读取并正确显示过**的 `../ShuiHu-Re/out/probe_stats.sav` **逐字节相同**。
 
 ### 样本对照（均与游戏内截图一致）
 
@@ -560,7 +681,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\selftest.ps1
 
 ### 实机验收（2026-11-10）
 
-Win98 实机完成：打开存档 → 改必杀 84→99 → 写入 → 复查 → 恢复备份 → 回到 84。
+Win98 实机完成：打开存档 → 改必杀 84→99 → 写入 → 复查 → 恢复存档 → 回到 84。
 
 ---
 
@@ -695,7 +816,7 @@ build\build-tcc.bat   :: 在干净克隆上应提示 generated sources are missi
 
 ```ini
 [ui]
-LastDir=C:\ShuiHu\Save\
+LastDir=C:\ShuiHu\ShuiHu\Save\
 ```
 
 - 「浏览...」对话框以该目录为起始位置
@@ -975,7 +1096,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\doccheck.ps1
 
 ### 对账：对话里的结论有没有进报告
 
-分析报告在仓库外（`../ShuiHu-分析报告.md`），容易"只说不写"。`tools\reportcheck.ps1` 做机械提醒：
+分析报告在仓库外（`../ShuiHu-Re/ShuiHu-分析报告.md`），容易"只说不写"。`tools\reportcheck.ps1` 做机械提醒：
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\reportcheck.ps1 -Since 3
@@ -999,3 +1120,97 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\reportcheck.ps1 -Since
 
 **它只能提醒，不能代替判断**：关键词命中不等于结论写全，未命中也可能只是换了措辞。
 真正的判定标准是：**每条结论都能回答"它在报告的哪一节"**。
+
+---
+
+## 十九、Win98 镜像直连（测试工作流）
+
+> 目标：agent 不启动 Win98，直接读写 `windows98.img` 里的存档 / EXE / GOODS.DAB；
+> 用户只启动 DOSBox 看结果。工具：`tools\imgfs.py` + `tools\vmtest.ps1`。
+
+### 镜像事实（2026-11-11 只读勘察）
+
+| 项 | 值 |
+|---|---|
+| 镜像 | `.exclude\ShuiHu_Dosbox_win98\windows98.img`，2,146,959,872 B |
+| 分区 | MBR + FAT16，LBA 63 起，4,193,217 扇区 |
+| 簇 | 512 B/扇区、64 扇区/簇（32 KiB）、2 份 FAT、65,510 簇 |
+| 基线 | 25,749 已用 / 39,761 空闲；0 丢簇 / 0 交叉链；223 目录 |
+| 布局 | `C:\SH` 游戏、`C:\SH\SAVE` save0..9、`C:\SH\DATA` GOODS.DAB、`C:\RELEASE` 编辑器 |
+
+### 黑名单（写/删拒绝，读允许）
+
+| 类别 | 项 |
+|---|---|
+| 目录 | `/WINDOWS/**`、`/PROGRAM FILES/**`（含 8.3 别名 `PROGRA~1`） |
+| 根系统文件 | `IO.SYS`、`MSDOS.SYS`、`COMMAND.COM`、`AUTOEXEC.BAT`、`CONFIG.SYS`、`SYSTEM.1ST`、`SUHDLOG.DAT`、`PDOS.DEF`、`MSDOS.---`、`BOOTLOG.TXT`、`BOOTLOG.PRV`、`SETUPLOG.TXT`、`DETLOG.TXT`、`FRUNLOG.TXT`、`NETLOG.TXT`、`SCANDISK.LOG` |
+| 属性 | 任意 `SYSTEM` 属性或卷标项 |
+
+其余路径（`/SH`、`/SH/SAVE`、`/SH/DATA`、`/RELEASE`、`/MY DOCUMENTS`、`/RECYCLED`、根目录新文件…）可读写。
+名单是 `imgfs.py` 顶部常量，v1 无运行时绕过。
+
+### 安全模型
+
+- **独占打开**：`share mode = 0`；DOSBox/其他进程打开目标镜像时退出码 **3**。
+- **M1 原位替换**：只写目标数据簇 + 该文件的 32 B 目录项，**FAT 不变**；写前 journal、写后回读哈希 + `check`；失败自动回滚（退出码 5）。
+- **M2 分配/新建/删除**：只在克隆镜像上验收后使用；先写 journal，再按「FAT→数据→目录项→释放旧链」的顺序应用。
+- **备份**：首次真实写入前 `vmtest.ps1 backup`（2 GB + SHA-256）；journal 在 `.imgfs\<镜像名>\`，保留最近 20 个。
+- 退出码：0 成功；2 用法；3 占用；4 结构/不支持；5 校验/回滚；6 容量；7 受保护路径。
+
+### 第一次使用（克隆上验证）
+
+```powershell
+# 1) 复制测试镜像 + 生成 CD1-test.conf
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\vmtest.ps1 clone
+
+# 2) 42 项自动断言（只碰 windows98.test.img）
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\imgfs-test.ps1
+
+# 3) 人工启动一次克隆 Win98（脚本末尾会打印确切命令与预期）
+cd .exclude\ShuiHu_Dosbox_win98
+.\dosbox.exe -conf CD1-test.conf
+# Win98 里运行 C:\RELEASE\shuihu-edit-GUI.exe，打开 C:\RELEASE\save6.sav
+# 预期：武龍 30 级 / 必杀 64 / 金钱 119333（save9 的内容）
+```
+
+### 日常回路（真实镜像）
+
+```powershell
+# 构建后把新 GUI 放进镜像 C:\RELEASE
+build\build-tcc.bat
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\vmtest.ps1 backup
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\vmtest.ps1 sync-release
+
+# 探针：拉 save9 -> 用 CLI 改必杀 99 -> 写回
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\vmtest.ps1 probe -Slot 9 -Field crit -Value 99
+
+# 用户：启动游戏 -> 读第 9 档 -> 必杀 99 -> 退出
+# 回来后把游戏写过的存档拉出来对比
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\vmtest.ps1 pull-saves
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\vmtest.ps1 check
+```
+
+任意命令加 `-WhatIf` 只看计划；加 `-ImagePath <img>` 指向克隆。
+
+### 直接使用 imgfs.py
+
+```powershell
+python tools\imgfs.py info
+python tools\imgfs.py ls /SH/SAVE --long
+python tools\imgfs.py get /SH/SAVE/save9.sav out\save9.sav
+python tools\imgfs.py put out\save9.sav /SH/SAVE/save9.sav
+python tools\imgfs.py check
+python tools\imgfs.py rollback .exclude\ShuiHu_Dosbox_win98\.imgfs\windows98\journal-....bin
+```
+
+### 故障速查
+
+| 症状 | 处置 |
+|---|---|
+| 退出码 3 | 关闭 DOSBox；或关掉占用镜像的 WinImage/资源管理器预览/杀软/OneDrive |
+| 退出码 7 | 目标在黑名单；改走 `/SH`、`/RELEASE`、`/MY DOCUMENTS` 等 |
+| 退出码 6 | 新文件大于现有簇链（M2 未启用/磁盘满）；先删无用文件或改小 |
+| 退出码 5 | 已自动回滚；检查 journal 或从 `backup` 恢复 |
+| 退出码 4 | 镜像不是 FAT16 或结构损坏；先 `check` |
+| `sync-release` 报 diff 失败 | 先 `build\build-tcc.bat`，确认 `bin\shuihu-edit-GUI.exe` 存在 |
+

@@ -101,6 +101,20 @@ int sh_set_money(sh_save *s, uint32_t v);
 /* 写入第 slot 格（0..6）的道具 id（1 基，0=空） */
 int sh_set_slot(sh_save *s, int idx, int slot, uint8_t item_id);
 
+/* 写槽位的 4 个装备缓存（+2/+4/+6/+8 = GOODS +76/+82/+84/+90）。
+ * 调用方负责从 GOODS 取值；道具被"获得"时游戏就是这么填的。 */
+int sh_slot_cache_set4(sh_save *s, int idx, int slot, const unsigned short v[4]);
+
+/* 槽位里的装备加成缓存（游戏按这俩值算面板，见 FUN_00408540 第 105 行）：
+ *   which = SH_CACHE_ATK   -> 槽+2（攻击）
+ *   which = SH_CACHE_DEF   -> 槽+6（防御）
+ * 面板攻击/防御 = 基础 + 三个装备槽的缓存之和（游戏内夹到 255）。 */
+#define SH_CACHE_ATK 0
+#define SH_CACHE_DEF 1
+
+int sh_slot_cache_get(const sh_save *s, int idx, int slot, int which);
+int sh_slot_cache_set(sh_save *s, int idx, int slot, int which, int v);
+
 /* 解锁该角色的隐藏必杀技：把 `3C 00 03 00` 之前的连续 0/1 字节清零 */
 int sh_unlock_hidden(sh_save *s, int idx, int slots);
 

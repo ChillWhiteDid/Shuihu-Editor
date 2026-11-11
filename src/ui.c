@@ -23,41 +23,67 @@
 #include "textconv.h"
 #include "fileio.h"
 
-/* ---- 控件 ID ---- */
-#define ID_PATH      1001
-#define ID_BROWSE    1002
-#define ID_OPEN      1003
-#define ID_LIST      1010
-#define ID_WRITE     1020
-#define ID_RESTORE   1021
-#define ID_UNLOCK    1022
-#define ID_ABOUT     1023
-#define ID_QUIT      1024
-#define ID_STATUS    1030
-#define ID_EDIT0     1100   /* 1100..1100+NFIELDS-1 */
-#define ID_SLOT0     1200   /* 1200..1200+6 : 槽位 id 输入框 */
-#define ID_SLOTNAME0 1300   /* 1300..1300+6 : 槽位名称显示 */
-#define ID_HIDDEN    1310
-#define ID_MONEY     1050   /* 金钱输入框 */
-#define ID_TREE      1025   /* 查看技能树按钮 */
-#define ID_TREE_EDIT 1026   /* 技能树窗口里的文本框 */
-#define ID_TREE_CLOSE 1027  /* 技能树窗口的关闭按钮 */
-#define ID_BAK_LIST   1028  /* 恢复备份窗口：备份列表 */
-#define ID_BAK_OK     1029  /* 恢复备份窗口：恢复按钮 */
-#define ID_BAK_CANCEL 1031  /* 恢复备份窗口：取消按钮 */
-#define ID_RELOAD    1032  /* 重载存档按钮 */
-#define ID_GOODS     1033  /* 道具表按钮 */
-#define ID_GB_LIST   1034  /* 道具表窗口：列表 */
-#define ID_GB_EDIT0  1040  /* 道具表窗口：5 个字段输入框 */
-#define ID_GB_SAVE   1050  /* 道具表窗口：写入文件 */
-#define ID_GB_CLOSE  1051  /* 保留（改页签后不再使用） */
-#define ID_TAB_SAVE  1060  /* 页签：存档修改 */
-#define ID_TAB_GOODS 1061  /* 页签：道具编辑 */
-#define ID_GB_WARN   1062  /* 道具页：警示条 */
-#define ID_GB_LAB0   1063  /* 道具页：5 个字段名 */
-#define ID_GB_RNG0   1068  /* 道具页：5 个范围提示 */
+/* ================= 控件 ID 规划 =================
+ * Windows 的 WM_COMMAND 只取 LOWORD，所以控件 ID 必须 < 65536。
+ * 按“页面/窗口”分块，每块留足空位；新增控件必须落在对应块内，不要跨块。
+ *
+ *   10000 – 14999   存档修改页（page 0）
+ *   15000 – 19999   道具编辑页（page 1）
+ *   20000 – 20499   两页共用（状态栏、页签）
+ *   21000 – 22999   子窗口（技能树 / 恢复存档 / 装备加成）
+ *
+ * is_goods_id() 只依赖 15000 这个边界；调整分块时务必同步它。
+ * 历史上因为 ID 撞车出过三次问题（按钮跑到别的页、文字写进别的控件），
+ * 自检 case19/case21 会守住这两类错误。
+ */
 
-#define APP_VERSION  "v2.2"
+/* ---- 存档修改页：10000 – 14999 ---- */
+#define ID_PATH        10000  /* 存档路径输入框 */
+#define ID_BROWSE      10001  /* 浏览... */
+#define ID_OPEN        10002  /* 打开 */
+#define ID_LIST        10010  /* 角色列表 */
+#define ID_WRITE       10020  /* 写入存档 */
+#define ID_RESTORE     10021  /* 恢复存档 */
+#define ID_RELOAD      10022  /* 重载存档 */
+#define ID_TREE        10023  /* 查看技能树 */
+#define ID_UNLOCK      10024  /* 解锁隐藏技 */
+#define ID_CACHE       10025  /* 装备加成 */
+#define ID_ABOUT       10030  /* 关于 */
+#define ID_QUIT        10031  /* 退出 */
+#define ID_MONEY       10050  /* 金钱 */
+#define ID_EDIT0       10200  /* +0 .. +NFIELDS-1  字段输入框 */
+#define ID_SLOT0       10300  /* +0 .. +SH_SLOT_COUNT-1  槽位下拉 */
+#define ID_HIDDEN      10410  /* 隐藏技状态标签 */
+#define ID_EQNOTE0     10420  /* +0 .. +1  攻击/防御的装备分解标签 */
+
+/* ---- 道具编辑页：15000 – 19999 ---- */
+#define ID_GB_LIST     15000  /* 道具列表 */
+#define ID_GB_EDIT0    15010  /* +0 .. +SH_GF_COUNT-1  字段输入框 */
+#define ID_GB_SAVE     15020  /* 写入道具表 */
+#define ID_GB_RESTORE  15021  /* 恢复道具表 */
+#define ID_GB_WARN     15030  /* 警示条 */
+#define ID_GB_LAB0     15040  /* +0 .. +SH_GF_COUNT-1  字段名 */
+#define ID_GB_RNG0     15050  /* +0 .. +SH_GF_COUNT-1  范围提示 */
+#define ID_GB_DESC     15060  /* 说明文本 */
+#define ID_GB_CHK      15061  /* 一致性提示 */
+
+/* ---- 两页共用：20000 – 20499 ---- */
+#define ID_STATUS      20000  /* 状态栏（两页都显示）*/
+#define ID_TAB_SAVE    20010  /* 页签：存档修改 */
+#define ID_TAB_GOODS   20011  /* 页签：道具编辑 */
+
+/* ---- 子窗口：21000 – 22999 ---- */
+#define ID_TREE_EDIT   21000  /* 技能树窗口：文本框 */
+#define ID_TREE_CLOSE  21001  /* 技能树窗口：关闭 */
+#define ID_BAK_LIST    21100  /* 恢复存档窗口：列表 */
+#define ID_BAK_OK      21101  /* 恢复存档窗口：恢复 */
+#define ID_BAK_CANCEL  21102  /* 恢复存档窗口：取消 */
+#define ID_CA_EDIT0    21200  /* +0 .. +5  装备加成窗口：6 个输入框 */
+#define ID_CA_OK       21210  /* 装备加成窗口：写入 */
+#define ID_CA_CANCEL   21211  /* 装备加成窗口：取消 */
+#define ID_CA_REFILL   21212  /* 装备加成窗口：按 GOODS 重填 */
+
+#define APP_VERSION  "v2.0"
 #define APP_BUILD    "2026-11-10"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -81,6 +107,7 @@ typedef struct {
     HWND    hSlot[SH_SLOT_COUNT];      /* 下拉列表（user32 COMBOBOX） */
     HWND    hMoney;
     HWND    hHidden;
+    HWND    hEquipNote[2];            /* 攻击/防御的「装备 +N」分解标签 */
     HFONT   hFont;
     char    argPath[MAX_PATH];         /* 命令行传入的存档路径（可选） */
     HICON   hIconBig, hIconSmall;      /* 运行时从 logo.ico 加载 */
@@ -110,11 +137,16 @@ static int  recompute_dirty(void);
 static void update_title(HWND hwnd, int dirty);
 static void do_about(void);
 static void set_page(int which);
+static int  is_goods_id(int id);
 static void do_goods(void);
 static void gb_fill_list(void);
 static void gb_show_item(int id);
 static int  gb_apply(void);
 static void gb_commit(void);
+/* 道具表状态：定义在此，供 apply_slots() 等早于「道具表」一节的函数使用 */
+static sh_goods s_gb;
+static int      s_gbLoaded;
+
 static void build_ini_path(void);
 static void load_settings(void);
 static void remember_dir(const char *fileOrDir);
@@ -164,6 +196,122 @@ static void msg(const char *title, const char *text, UINT flags)
     MessageBoxA(NULL, body, head, flags);
 }
 
+/* ---------------- 轻量 tooltip（不依赖 comctl32） ----------------
+ * Win98 的 Tooltip 属于 comctl32，本项目不用它；
+ * 这里用"定时轮询光标 + 自绘 popup 窗口"实现，行为等价、依赖为零。 */
+static HWND s_tip;
+static int  s_tipShowing;
+static const char *s_tipText = "";
+static int  s_tipX = -99999, s_tipY = -99999;
+
+static LRESULT CALLBACK TipProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_ERASEBKGND: {
+        RECT rc;
+        HBRUSH b;
+        GetClientRect(h, &rc);
+        b = CreateSolidBrush(GetSysColor(COLOR_INFOBK));
+        FillRect((HDC)wp, &rc, b);
+        DeleteObject(b);
+        return 1;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc;
+        RECT rc;
+        char a[1024];
+        dc = BeginPaint(h, &ps);
+        GetClientRect(h, &rc);
+        rc.left += 4; rc.top += 3; rc.right -= 4; rc.bottom -= 3;
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, GetSysColor(COLOR_INFOTEXT));
+        if (g.hFont) SelectObject(dc, g.hFont);   /* 与测量用同一个字体 */
+        sh_utf8_to_acp(s_tipText ? s_tipText : "", a, (int)sizeof(a));
+        DrawTextA(dc, a, -1, &rc, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        if (g.hFont) SelectObject(dc, GetStockObject(SYSTEM_FONT));
+        EndPaint(h, &ps);
+        return 0;
+    }
+    }
+    return DefWindowProcA(h, m, wp, lp);
+}
+
+static void tip_show(int x, int y, const char *utf8)
+{
+    char a[1024];
+    HDC dc;
+    HFONT old;
+    RECT rc;
+
+    if (!s_tip) {
+        WNDCLASSA wc;
+        memset(&wc, 0, sizeof(wc));
+        wc.lpfnWndProc = TipProc;
+        wc.hInstance = GetModuleHandleA(NULL);
+        wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_INFOBK + 1);
+        wc.lpszClassName = "ShuiHuTip";
+        RegisterClassA(&wc);
+        s_tip = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, "ShuiHuTip", "",
+                                WS_POPUP | WS_BORDER, 0, 0, 10, 10,
+                                NULL, NULL, wc.hInstance, NULL);
+        if (!s_tip) return;
+        if (g.hFont) SendMessageA(s_tip, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        s_tipText = "";
+    }
+    if (s_tipText != utf8) {
+        s_tipText = utf8;
+        sh_utf8_to_acp(utf8, a, (int)sizeof(a));
+        dc = GetDC(s_tip);
+        old = (HFONT)SelectObject(dc, g.hFont ? g.hFont : GetStockObject(DEFAULT_GUI_FONT));
+        SetRect(&rc, 0, 0, 330, 0);
+        DrawTextA(dc, a, -1, &rc, DT_CALCRECT | DT_LEFT | DT_WORDBREAK);
+        SelectObject(dc, old);
+        ReleaseDC(s_tip, dc);
+        if (rc.right < 120) rc.right = 120;        /* 最小宽度 */
+        SetWindowPos(s_tip, HWND_TOPMOST, 0, 0, rc.right + 14, rc.bottom + 12,
+                     SWP_NOACTIVATE | SWP_NOMOVE);
+        InvalidateRect(s_tip, NULL, FALSE);
+    }
+    /* 同一位置不再重复 SetWindowPos（否则每 200ms 触发一次重绘 → 看起来在闪） */
+    if (x != s_tipX || y != s_tipY) {
+        SetWindowPos(s_tip, HWND_TOPMOST, x + 18, y + 22, 0, 0,
+                     SWP_NOACTIVATE | SWP_NOSIZE);
+        s_tipX = x;
+        s_tipY = y;
+    }
+    if (!s_tipShowing) { ShowWindow(s_tip, SW_SHOWNOACTIVATE); s_tipShowing = 1; }
+}
+
+static void tip_hide(void)
+{
+    if (s_tipShowing && s_tip) { ShowWindow(s_tip, SW_HIDE); s_tipShowing = 0; }
+    s_tipX = s_tipY = -99999;
+}
+
+/* 光标落在某个控件上就显示对应提示，否则隐藏 */
+typedef struct { HWND h; const char *text; } sh_tip_item;
+
+static void tip_poll(sh_tip_item *map, int n)
+{
+    POINT p;
+    RECT r;
+    int i;
+
+    GetCursorPos(&p);
+    for (i = 0; i < n; i++) {
+        if (!map[i].h || !map[i].text) continue;
+        if (!IsWindowVisible(map[i].h)) continue;
+        GetWindowRect(map[i].h, &r);
+        if (p.x >= r.left && p.x < r.right && p.y >= r.top && p.y < r.bottom) {
+            tip_show(p.x, p.y, map[i].text);
+            return;
+        }
+    }
+    tip_hide();
+}
+
 /* ------------------------------------------------------------------ */
 /* 列表与字段                                                          */
 /* ------------------------------------------------------------------ */
@@ -199,6 +347,8 @@ static void clear_fields(void)
     }
     SetWindowTextA(g.hMoney, "");
     SetWindowTextA(g.hHidden, "");
+    SetWindowTextA(g.hEquipNote[0], "");
+    SetWindowTextA(g.hEquipNote[1], "");
 }
 
 static void show_unit(void)
@@ -235,6 +385,21 @@ static void show_unit(void)
         strcpy(buf, "隐藏技：（无标志块）");
     }
     SetWindowTextA(g.hHidden, ansi(buf));
+
+    /* 攻击/防御的“装备加成”分解：面板 = 基础（游戏算，不存盘） + Σ三槽缓存。
+     * 这里只显示装备那一部分，让用户知道这个数还有另一半来源。 */
+    {
+        int k, sa = 0, sd = 0;
+        for (k = 0; k < 3 && k < SH_SLOT_COUNT; k++) {
+            if (u->slots[k] == 0) continue;      /* 空槽不计入 */
+            sa += sh_slot_cache_get(&g.s, g.sel, k, SH_CACHE_ATK);
+            sd += sh_slot_cache_get(&g.s, g.sel, k, SH_CACHE_DEF);
+        }
+        sprintf(buf, "装备+%d", sa);
+        SetWindowTextA(g.hEquipNote[0], ansi(buf));
+        sprintf(buf, "装备+%d", sd);
+        SetWindowTextA(g.hEquipNote[1], ansi(buf));
+    }
 }
 
 /* 从界面读取字段并写入内存；失败返回 0 并弹提示 */
@@ -335,6 +500,34 @@ static void update_title(HWND hwnd, int dirty)
     if (hwnd) SetWindowTextA(hwnd, t);
 }
 
+/* 取某道具的 4 个装备缓存值（GOODS +76/+82/+84/+90）。
+ * 优先用已加载的 s_gb，否则临时读一次 GOODS.DAB。
+ * 返回 0 表示取不到（调用方应保持原缓存不动）。 */
+static int item_cache4(int id, unsigned short v[4])
+{
+    char path[600];
+    sh_goods tmp;
+
+    v[0] = v[1] = v[2] = v[3] = 0;
+    if (id <= 0) return 1;                       /* 空槽 -> 全 0 */
+
+    if (s_gbLoaded) {
+        v[0] = (unsigned short)sh_goods_get_u16(&s_gb, id, 76);
+        v[1] = (unsigned short)sh_goods_get_u16(&s_gb, id, 82);
+        v[2] = (unsigned short)sh_goods_get_u16(&s_gb, id, 84);
+        v[3] = (unsigned short)sh_goods_get_u16(&s_gb, id, 90);
+        return 1;
+    }
+    if (!goods_locate(path, sizeof(path))) return 0;
+    if (sh_goods_load(path, &tmp) != 0) return 0;
+    v[0] = (unsigned short)sh_goods_get_u16(&tmp, id, 76);
+    v[1] = (unsigned short)sh_goods_get_u16(&tmp, id, 82);
+    v[2] = (unsigned short)sh_goods_get_u16(&tmp, id, 84);
+    v[3] = (unsigned short)sh_goods_get_u16(&tmp, id, 90);
+    sh_goods_free(&tmp);
+    return 1;
+}
+
 static int apply_slots(void)
 {
     int i;
@@ -343,9 +536,22 @@ static int apply_slots(void)
 
     for (i = 0; i < SH_SLOT_COUNT; i++) {
         int v = (int)SendMessageA(g.hSlot[i], CB_GETCURSEL, 0, 0);
+        int old = (int)g.s.units[g.sel].slots[i];
         if (v == CB_ERR) v = 0;
         if (v < 0 || v > sh_item_count()) v = 0;
         if (sh_set_slot(&g.s, g.sel, i, (uint8_t)v) != 0) return 0;
+
+        /* 道具换了（含清空）就把槽位缓存按 GOODS 重填 —— 这正是游戏"获得道具"
+         * 时的动作；否则新装的装备加成为 0，玩家会看到"装上了攻击力却没变"。
+         * 只在 id 变化时才填，避免覆盖用户在「装备加成」里手改的值。 */
+        if (v != old) {
+            unsigned short c4[4];
+            int ok = item_cache4(v, c4);
+            /* 取不到 GOODS 时 item_cache4 会把 c4 置 0：宁可清零，也不要残留
+             * 上一件道具的加成（那会凭空多出攻击力，更误导）。 */
+            sh_slot_cache_set4(&g.s, g.sel, i, c4);
+            (void)ok;
+        }
     }
     return 1;
 }
@@ -572,7 +778,7 @@ static void do_unlock(void)
 }
 
 /* 找到 backup_save 目录里最新的备份并恢复 */
-/* ---------------- 恢复备份：从 backup_save 里选一份 ---------------- */
+/* ---------------- 恢复存档：从 backup_save 里选一份 ---------------- */
 
 #define SH_MAX_BAK 400
 
@@ -582,6 +788,7 @@ static FILETIME s_bakTime[SH_MAX_BAK];             /* 修改时间（排序用�
 static int      s_bakCount;
 static int      s_bakChoice;                        /* -1 = 取消 */
 static HWND     s_bakWnd;
+static const char *s_pickTitle = "恢复存档";
 
 static void ft_to_text(const FILETIME *ft, char *out)
 {
@@ -595,21 +802,14 @@ static void ft_to_text(const FILETIME *ft, char *out)
 }
 
 /* 枚举 <存档目录>\backup_save\*.sav，按修改时间倒序（最新在前） */
-static int collect_backups(void)
+/* 枚举指定目录下的匹配文件，按修改时间倒序（最新在前）。
+ * dir 为目录，pat 为 \\*.xxx 形式的后缀模式，showDir 决定列表里显示的路径前缀。 */
+static int collect_backups_in(const char *dir, const char *pat, const char *showDir)
 {
-    char dir[MAX_PATH], pat[MAX_PATH];
     WIN32_FIND_DATAA fd;
     HANDLE h;
     int i, n = 0;
 
-    strncpy(dir, g.path, sizeof(dir) - 1);
-    dir[sizeof(dir) - 1] = (char)0;
-    {
-        char *p = strrchr(dir, '\\');
-        if (p) *p = (char)0; else strcpy(dir, ".");
-    }
-
-    sprintf(pat, "%s\\backup_save\\*.sav", dir);
     h = FindFirstFileA(pat, &fd);
     if (h == INVALID_HANDLE_VALUE) return 0;
 
@@ -619,7 +819,7 @@ static int collect_backups(void)
         if (n >= SH_MAX_BAK) break;
 
         ft_to_text(&fd.ftLastWriteTime, when);
-        sprintf(s_bakPath[n], "%s\\backup_save\\%s", dir, fd.cFileName);
+        sprintf(s_bakPath[n], "%s\\%s", showDir, fd.cFileName);
         sprintf(s_bakText[n], "%s   %s   (%lu 字节)",
                 when, fd.cFileName, (unsigned long)fd.nFileSizeLow);
         s_bakTime[n] = fd.ftLastWriteTime;
@@ -650,6 +850,35 @@ static int collect_backups(void)
 
     s_bakCount = n;
     return n;
+}
+
+/* 存档备份：<存档目录>\backup_save\*.sav */
+static int collect_backups(void)
+{
+    char dir[MAX_PATH], pat[MAX_PATH], bdir[MAX_PATH + 32];
+    char *p;
+
+    strncpy(dir, g.path, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = (char)0;
+    p = strrchr(dir, '\\');
+    if (p) *p = (char)0; else strcpy(dir, ".");
+    sprintf(bdir, "%s\\backup_save", dir);
+    sprintf(pat, "%s\\*.sav", bdir);
+    return collect_backups_in(dir, pat, bdir);
+}
+
+/* 道具表备份：<GOODS 目录>\GOODS.DAB_*.bak */
+static int collect_goods_backups(const char *goodsPath)
+{
+    char dir[MAX_PATH], pat[MAX_PATH];
+    char *p;
+
+    strncpy(dir, goodsPath, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = (char)0;
+    p = strrchr(dir, '\\');
+    if (p) *p = (char)0; else strcpy(dir, ".");
+    sprintf(pat, "%s\\GOODS.DAB_*.bak", dir);
+    return collect_backups_in(dir, pat, dir);
 }
 
 static LRESULT CALLBACK BakProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
@@ -709,8 +938,6 @@ static int pick_backup(void)
     HWND lb;
     int i;
 
-    if (collect_backups() <= 0) return -1;
-
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc = BakProc;
     wc.hInstance = GetModuleHandleA(NULL);
@@ -720,7 +947,7 @@ static int pick_backup(void)
     RegisterClassA(&wc);
 
     s_bakChoice = -1;
-    s_bakWnd = CreateWindowExA(0, "ShuiHuBak", ansi("恢复备份"),
+    s_bakWnd = CreateWindowExA(0, "ShuiHuBak", ansi(s_pickTitle),
         WS_POPUP | WS_CAPTION | WS_SYSMENU,
         CW_USEDEFAULT, CW_USEDEFAULT, 600, 430,
         g.hMain, NULL, wc.hInstance, NULL);
@@ -745,6 +972,12 @@ static int pick_backup(void)
     }
     EnableWindow(g.hMain, TRUE);
     SetActiveWindow(g.hMain);
+    tip_hide();                     /* 关掉残留的提示框 */
+    /* 模态窗口覆盖过主窗口，关掉后必须重绘。
+     * 注意：InvalidateRect 只会重画父窗口本身，子控件（按钮等）不会跟着重画，
+     * 所以必须用 RDW_ALLCHILDREN。 */
+    RedrawWindow(g.hMain, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     return s_bakChoice;
 }
 
@@ -764,7 +997,7 @@ static void do_restore(void)
     /* 2) 有未保存修改则先确认（恢复会丢弃它们） */
     if (g.dirty) {
         if (MessageBoxA(g.hMain,
-                ansi("当前有未保存的修改，恢复备份会丢弃它们。\n\n确定继续吗？"),
+                ansi("当前有未保存的修改，恢复存档会丢弃它们。\n\n确定继续吗？"),
                 ansi("未保存的修改"), MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
             return;
     }
@@ -809,8 +1042,6 @@ static void do_reload(void)
 
 /* ---------------- 道具表（GOODS.DAB）编辑窗口 ---------------- */
 
-static sh_goods s_gb;
-static int      s_gbLoaded;
 static HWND     s_gbWnd, s_gbList;
 static HWND     s_gbEdit[SH_GF_COUNT];
 static int      s_gbSel;            /* 当前选中道具 id，0 = 未选 */
@@ -825,25 +1056,8 @@ static int file_exists(const char *p)
 /* 猜测 GOODS.DAB 位置：存档一般在 <游戏>\Save\，数据在 <游戏>\Data\ */
 static int goods_locate(char *out, size_t n)
 {
-    char dir[512], cand[600];
-    char *p;
-
     if (!g.path[0]) return 0;
-    strncpy(dir, g.path, sizeof(dir) - 1);
-    dir[sizeof(dir) - 1] = (char)0;
-    p = strrchr(dir, '\\');
-    if (p) *p = (char)0; else strcpy(dir, ".");
-
-    sprintf(cand, "%s\\..\\Data\\GOODS.DAB", dir);
-    if (file_exists(cand)) { strncpy(out, cand, n - 1); out[n - 1] = (char)0; return 1; }
-
-    sprintf(cand, "%s\\Data\\GOODS.DAB", dir);
-    if (file_exists(cand)) { strncpy(out, cand, n - 1); out[n - 1] = (char)0; return 1; }
-
-    sprintf(cand, "%s\\GOODS.DAB", dir);
-    if (file_exists(cand)) { strncpy(out, cand, n - 1); out[n - 1] = (char)0; return 1; }
-
-    return 0;
+    return sh_goods_locate(g.path, out, n);
 }
 
 static void gb_fill_list(void)
@@ -853,8 +1067,10 @@ static void gb_fill_list(void)
     SendMessageA(g.hGbList, LB_RESETCONTENT, 0, 0);
     for (id = 1; id <= s_gb.count; id++) {
         char line[220];
+        /* 注意：sh_item_name 返回 UTF-8，这里不要再 ansi()；
+         * 整行最后由 ansi(line) 统一转一次，否则会二次转码变成 ??? */
         sprintf(line, "%3d  %-16s  攻%3d 防%3d 移%3d 体%3d 气%3d",
-                id, ansi(sh_item_name(id)),
+                id, sh_item_name(id),
                 sh_goods_get(&s_gb, id, SH_GF_ATK),
                 sh_goods_get(&s_gb, id, SH_GF_DEF),
                 sh_goods_get(&s_gb, id, SH_GF_MOVE),
@@ -862,6 +1078,50 @@ static void gb_fill_list(void)
                 sh_goods_get(&s_gb, id, SH_GF_MPMAX));
         SendMessageA(g.hGbList, LB_ADDSTRING, 0, (LPARAM)ansi(line));
     }
+}
+
+/* 从说明里取「关键词+数字」。只认「XX加N」这种明确句式，
+ * 避免把「3回合內命中率提升255點」这类状态效果误判成装备数值。 */
+static int desc_num_after(const char *desc, const char *key, int *out)
+{
+    const char *p = strstr(desc, key);
+    if (!p) return 0;
+    p += strlen(key);
+    while (*p && (*p < '0' || *p > '9')) p++;
+    if (!*p) return 0;
+    *out = atoi(p);
+    return 1;
+}
+
+/* 说明与字段是否一致。返回不一致项数；msg 里写原因（无则空串） */
+static int goods_check(int id, char *msg, size_t cap)
+{
+    static const struct { const char *key; sh_goods_field f; } tab[] = {
+        { "\xe6\x94\xbb\xe6\x93\x8a\xe5\x8a\x9b\xe5\x8a\xa0", SH_GF_ATK   },  /* 攻擊力加 */
+        { "\xe9\x98\xb2\xe5\xbe\xa1\xe5\x8a\x9b\xe5\x8a\xa0", SH_GF_DEF   },  /* 防禦力加 */
+        { "\xe7\xa7\xbb\xe5\x8b\x95\xe5\x8a\x9b\xe5\x8a\xa0", SH_GF_MOVE  },  /* 移動力加 */
+        { "\xe6\x9c\x80\xe5\xa4\xa7\xe9\xab\x94\xe5\x8a\x9b\xe5\x8a\xa0", SH_GF_HPMAX }, /* 最大體力加 */
+        { "\xe6\x9c\x80\xe5\xa4\xa7\xe6\xb0\xa3\xe5\x8a\x9b\xe5\x8a\xa0", SH_GF_MPMAX }  /* 最大氣力加 */
+    };
+    const char *d = sh_item_desc(id);
+    int i, n, bad = 0;
+    size_t used = 0;
+
+    msg[0] = (char)0;
+    if (!d || !d[0]) return 0;
+
+    for (i = 0; i < (int)(sizeof(tab) / sizeof(tab[0])); i++) {
+        if (!desc_num_after(d, tab[i].key, &n)) continue;
+        if (n != sh_goods_get(&s_gb, id, tab[i].f)) {
+            char one[160];
+            sprintf(one, "%s说明写 %d，字段是 %d",
+                    used ? "；" : "", n, sh_goods_get(&s_gb, id, tab[i].f));
+            bad++;
+            if (used + strlen(one) < cap) { strcpy(msg + used, one); used += strlen(one); }
+        }
+    }
+    if (bad && used + 16 < cap) strcat(msg, " —— 可能不匹配");
+    return bad;
 }
 
 static void gb_show_item(int id)
@@ -873,6 +1133,15 @@ static void gb_show_item(int id)
     for (f = 0; f < SH_GF_COUNT; f++) {
         sprintf(buf, "%d", sh_goods_get(&s_gb, id, (sh_goods_field)f));
         SetWindowTextA(g.hGbEdit[f], buf);
+    }
+    /* 说明文本直接来自记录 +26（构建时已从 Big5 转 UTF-8） */
+    SetWindowTextA(GetDlgItem(g.hMain, ID_GB_DESC), ansi(sh_item_desc(id)));
+    {
+        char cm[300];
+        if (goods_check(id, cm, sizeof(cm)) > 0)
+            SetWindowTextA(GetDlgItem(g.hMain, ID_GB_CHK), ansi(cm));
+        else
+            SetWindowTextA(GetDlgItem(g.hMain, ID_GB_CHK), ansi("说明与字段一致"));
     }
 }
 
@@ -900,19 +1169,26 @@ static int gb_apply(void)
 }
 
 /* 切换页面：0 = 存档修改，1 = 道具编辑（伪标签，按 ID 段显隐） */
+/* 判断控件 ID 属于「道具编辑页」还是「存档修改页」。
+ * 重要：存档页的控件（ID_CACHE、ID_EQNOTE0…）绝不能落进 1062..1079 这一段，
+ * 否则会被误判成道具页控件而显示到错误页面（历史上踩过两次）。 */
+static int is_goods_id(int id)
+{
+    /* 分块方案让判断退化成一次边界比较：15000–19999 = 道具编辑页 */
+    return (id >= 15000 && id < 20000);
+}
+
 static void set_page(int which)
 {
     HWND c;
-    int goods;
 
     g.page = which;
     for (c = GetWindow(g.hMain, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
         int id = GetDlgCtrlID(c);
-        if (id == 0) continue;                       /* 无 ID 的控件保持原样 */
         if (id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS) continue;
-        goods = ((id >= ID_GB_LIST && id <= ID_GB_CLOSE) ||
-                 (id >= ID_GB_WARN && id <= ID_GB_RNG0 + SH_GF_COUNT - 1));
-        ShowWindow(c, (goods == which) ? SW_SHOW : SW_HIDE);
+        /* 注意：存档页的静态标签 ID 是 0，不能跳过 —— 否则两页会叠在一起 */
+        /* 注意 ID_MONEY 是 1050，不能把 1034..1051 整段当成道具页 */
+        ShowWindow(c, (is_goods_id(id) == which) ? SW_SHOW : SW_HIDE);
     }
     EnableWindow(GetDlgItem(g.hMain, ID_TAB_SAVE),  which == 0 ? FALSE : TRUE);
     EnableWindow(GetDlgItem(g.hMain, ID_TAB_GOODS), which == 1 ? FALSE : TRUE);
@@ -979,6 +1255,252 @@ static void gb_commit(void)
     }
     sprintf(m, "已写入并校验通过（%d 件道具）。\n\n备份：\n%s", s_gb.count, bak);
     msg("完成", m, MB_ICONINFORMATION);
+}
+
+/* 恢复道具表：从同目录的 GOODS.DAB_*.bak 里挑一份覆盖回去 */
+static void do_goods_restore(void)
+{
+    char m[900];
+    int pick;
+
+    if (!s_gbLoaded) {
+        do_goods();                     /* 先载入，顺便确定路径 */
+        if (!s_gbLoaded) return;
+    }
+
+    if (collect_goods_backups(s_gb.path) <= 0) {
+        msg("没有备份",
+            "GOODS.DAB 所在目录里没有找到 .bak 备份。\n\n"
+            "备份是在点「写入道具表」时自动生成的，\n"
+            "名字形如 GOODS.DAB_YYYYMMDD-HHMMSS.bak。",
+            MB_ICONINFORMATION);
+        return;
+    }
+
+    s_pickTitle = "恢复道具表";
+    pick = pick_backup();
+    s_pickTitle = "恢复存档";
+    if (pick < 0 || pick >= s_bakCount) return;
+
+    sprintf(m, "将用下面这份备份覆盖 GOODS.DAB：\n\n%s\n\n"
+               "（当前未写入的修改会丢失）\n\n确定恢复吗？", s_bakPath[pick]);
+    if (MessageBoxA(g.hMain, ansi(m), ansi("确认恢复"),
+                    MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
+        return;
+
+    if (!CopyFileA(s_bakPath[pick], s_gb.path, FALSE)) {
+        msg("恢复失败", "复制备份文件失败。", MB_ICONERROR);
+        return;
+    }
+
+    {
+        char gpath[SH_GOODS_PATH];
+        strncpy(gpath, s_gb.path, sizeof(gpath) - 1);
+        gpath[sizeof(gpath) - 1] = (char)0;
+        sh_goods_free(&s_gb);
+        s_gbLoaded = 0;
+        if (sh_goods_load(gpath, &s_gb) != 0) {
+            msg("恢复后读取失败",
+                "已用备份覆盖，但重新读取失败。文件可能已损坏，请用备份再试。",
+                MB_ICONERROR);
+            return;
+        }
+    }
+    s_gbLoaded = 1;
+    s_gbSel = 0;
+    gb_fill_list();
+    if (s_gb.count > 0) {
+        SendMessageA(g.hGbList, LB_SETCURSEL, 0, 0);
+        gb_show_item(1);
+    }
+    status("已从备份恢复道具表：%s", s_bakPath[pick]);
+    msg("完成", "已从备份恢复道具表。", MB_ICONINFORMATION);
+}
+
+/* ---------------- 装备加成（槽位里的攻击/防御缓存） ----------------
+ * 游戏算面板时：攻击 = 基础 + Σ(三个装备槽的 +2)，防御 = 基础 + Σ(+6)，
+ * 之后各自夹到 255。改 GOODS 不会刷新这份缓存，所以这里直接改存档。 */
+static HWND s_caWnd;
+static HWND s_caEdit[3][2];      /* [槽 0..2][0=攻击 1=防御] */
+
+static LRESULT CALLBACK CacheProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_CREATE: {
+        static const char *names[3] = { "武器槽", "衣服槽", "帽子槽" };
+        int r, c;
+        for (r = 0; r < 3; r++) {
+            HWND la = CreateWindowExA(0, "STATIC", ansi(names[r]),
+                WS_CHILD | WS_VISIBLE, 14, 18 + r * 42, 70, 20, hwnd, NULL, NULL, NULL);
+            if (g.hFont) SendMessageA(la, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            for (c = 0; c < 2; c++) {
+                s_caEdit[r][c] = CreateWindowExA(0, "EDIT", "",
+                    WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+                    92 + c * 120, 14 + r * 42, 70, 22, hwnd,
+                    (HMENU)(INT_PTR)(ID_CA_EDIT0 + r * 2 + c), NULL, NULL);
+                if (g.hFont) SendMessageA(s_caEdit[r][c], WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            }
+        }
+        {
+            HWND h1 = CreateWindowExA(0, "STATIC", ansi("攻击(+2)"),
+                WS_CHILD | WS_VISIBLE, 92, 0, 70, 16, hwnd, NULL, NULL, NULL);
+            HWND h2 = CreateWindowExA(0, "STATIC", ansi("防御(+6)"),
+                WS_CHILD | WS_VISIBLE, 212, 0, 70, 16, hwnd, NULL, NULL, NULL);
+            HWND st = CreateWindowExA(0, "STATIC",
+                ansi("面板 = 基础 + 三个装备槽之和（夹到 255）。\n"
+                     "这些值是道具获得时从 GOODS.DAB 复制的快照，\n"
+                     "改 GOODS 不会刷新它们。\n"
+                     "游戏读档时不重算：改完要回游戏卸下再装备一次才显示。\n"
+                     "想读档立刻看到，就直接改上方的攻击力/防御力字段\n"
+                     "（但下次重算会被这里的缓存覆盖，两个一起改最稳）。"),
+                WS_CHILD | WS_VISIBLE | SS_LEFT, 14, 152, 396, 110, hwnd, NULL, NULL, NULL);
+            HWND b1 = CreateWindowExA(0, "BUTTON", ansi("写入存档页"),
+                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+                130, 282, 110, 28, hwnd, (HMENU)(INT_PTR)ID_CA_OK, NULL, NULL);
+            HWND b2 = CreateWindowExA(0, "BUTTON", ansi("取消"),
+                WS_CHILD | WS_VISIBLE, 252, 282, 80, 28, hwnd,
+                (HMENU)(INT_PTR)ID_CA_CANCEL, NULL, NULL);
+            HWND b0 = CreateWindowExA(0, "BUTTON", ansi("按GOODS重填"),
+                WS_CHILD | WS_VISIBLE, 14, 282, 108, 28, hwnd,
+                (HMENU)(INT_PTR)ID_CA_REFILL, NULL, NULL);
+            if (g.hFont) SendMessageA(b0, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            if (g.hFont) {
+                SendMessageA(h1, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(h2, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(st, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(b1, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(b2, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            }
+            (void)st;
+        }
+        return 0;
+    }
+    case WM_TIMER:
+        if (wp == 2 && GetActiveWindow() == s_caWnd) {
+            static const char *ta = "攻击缓存（槽 +2）\n"
+                "面板攻击 = 基础 + 三个装备槽之和（夹 255）。\n"
+                "这是该道具**获得时**从 GOODS 复制的快照，改 GOODS 不会刷新它。\n"
+                "改完要回游戏触发一次重算（卸下再装备）才显示。";
+            static const char *td = "防御缓存（槽 +6）\n"
+                "面板防御 = 基础 + 三个装备槽之和（夹 255）。\n"
+                "同样是获得时的快照；改 GOODS 的 +84 不会刷新这里。";
+            sh_tip_item map[6];
+            int r;
+            for (r = 0; r < 3; r++) {
+                map[r * 2 + 0].h = s_caEdit[r][0]; map[r * 2 + 0].text = ta;
+                map[r * 2 + 1].h = s_caEdit[r][1]; map[r * 2 + 1].text = td;
+            }
+            tip_poll(map, 6);
+        }
+        return 0;
+
+    case WM_COMMAND:
+        if (LOWORD(wp) == ID_CA_OK) {
+            int r, c, bad = 0;
+            for (r = 0; r < 3; r++) {
+                for (c = 0; c < 2; c++) {
+                    char buf[32];
+                    int v;
+                    GetWindowTextA(s_caEdit[r][c], buf, sizeof(buf));
+                    v = atoi(buf);
+                    if (sh_slot_cache_set(&g.s, g.sel, r, c, v) != 0) bad++;
+                }
+            }
+            if (bad) {
+                msg("部分未写入", "有数值超出范围（0..65535），其余已写入。", MB_ICONWARNING);
+            }
+            recompute_dirty();
+            show_unit();
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        if (LOWORD(wp) == ID_CA_REFILL) {
+            /* 按当前 GOODS.DAB 重新填 3 个槽的 4 个缓存值。
+             * 用于：道具已经在槽里、但缓存是 0 或过期（工具直接塞进去时不会自动填）。 */
+            int r2, filled = 0;
+            for (r2 = 0; r2 < 3; r2++) {
+                unsigned short c4[4];
+                int iid = (int)g.s.units[g.sel].slots[r2];
+                if (iid == 0) continue;
+                if (!item_cache4(iid, c4)) continue;
+                if (sh_slot_cache_set4(&g.s, g.sel, r2, c4) == 0) filled++;
+                {
+                    char b[32];
+                    sprintf(b, "%u", (unsigned)c4[0]);
+                    SetWindowTextA(s_caEdit[r2][0], b);
+                    sprintf(b, "%u", (unsigned)c4[2]);
+                    SetWindowTextA(s_caEdit[r2][1], b);
+                }
+            }
+            if (filled == 0)
+                msg("重填失败", "找不到 GOODS.DAB，或三个装备槽都是空的。", MB_ICONWARNING);
+            else
+                status("已按 GOODS 重填 %d 个装备槽的加成缓存", filled);
+            return 0;
+        }
+        if (LOWORD(wp) == ID_CA_CANCEL) { DestroyWindow(hwnd); return 0; }
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        s_caWnd = NULL;
+        return 0;
+    }
+    return DefWindowProcA(hwnd, m, wp, lp);
+}
+
+static void do_cache_edit(void)
+{
+    WNDCLASSA wc;
+    MSG msgLoop;
+    int r, c;
+
+    if (!g.loaded || g.sel < 0) {
+        msg("提示", "请先打开存档并选择角色。", MB_ICONINFORMATION);
+        return;
+    }
+
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = CacheProc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = "ShuiHuCache";
+    RegisterClassA(&wc);
+
+    s_caWnd = CreateWindowExA(0, "ShuiHuCache", ansi("装备加成（攻击 / 防御缓存）"),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        CW_USEDEFAULT, CW_USEDEFAULT, 430, 360,
+        g.hMain, NULL, wc.hInstance, NULL);
+    if (!s_caWnd) return;
+
+    for (r = 0; r < 3; r++) {
+        for (c = 0; c < 2; c++) {
+            char buf[32];
+            sprintf(buf, "%d", sh_slot_cache_get(&g.s, g.sel, r, c));
+            SetWindowTextA(s_caEdit[r][c], buf);
+        }
+    }
+
+    SetTimer(s_caWnd, 2, 200, NULL);   /* tooltip 轮询 */
+    EnableWindow(g.hMain, FALSE);
+    ShowWindow(s_caWnd, SW_SHOW);
+    UpdateWindow(s_caWnd);
+    while (s_caWnd && GetMessageA(&msgLoop, NULL, 0, 0) > 0) {
+        if (!IsDialogMessageA(s_caWnd, &msgLoop)) {
+            TranslateMessage(&msgLoop);
+            DispatchMessageA(&msgLoop);
+        }
+    }
+    EnableWindow(g.hMain, TRUE);
+    SetActiveWindow(g.hMain);
+    tip_hide();                     /* 关掉残留的提示框 */
+    /* 模态窗口覆盖过主窗口，关掉后必须重绘。
+     * 注意：InvalidateRect 只会重画父窗口本身，子控件（按钮等）不会跟着重画，
+     * 所以必须用 RDW_ALLCHILDREN。 */
+    RedrawWindow(g.hMain, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 
 static void do_about(void)
@@ -1179,6 +1701,12 @@ static void do_skilltree(void)
 
     EnableWindow(g.hMain, TRUE);
     SetActiveWindow(g.hMain);
+    tip_hide();                     /* 关掉残留的提示框 */
+    /* 模态窗口覆盖过主窗口，关掉后必须重绘。
+     * 注意：InvalidateRect 只会重画父窗口本身，子控件（按钮等）不会跟着重画，
+     * 所以必须用 RDW_ALLCHILDREN。 */
+    RedrawWindow(g.hMain, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 static HWND mk(const char *cls, const char *text, DWORD style,
                int x, int y, int w, int h, int id)
@@ -1245,16 +1773,22 @@ static void create_children(HWND hwnd)
 
     /* 第一行：写入 / 恢复 / 重载 */
     mk("BUTTON", "写入存档",   BS_PUSHBUTTON, 282, 386, 96, 30, ID_WRITE);
-    mk("BUTTON", "恢复备份",   BS_PUSHBUTTON, 386, 386, 90, 30, ID_RESTORE);
+    mk("BUTTON", "恢复存档",   BS_PUSHBUTTON, 386, 386, 90, 30, ID_RESTORE);
     mk("BUTTON", "重载存档",   BS_PUSHBUTTON, 484, 386, 90, 30, ID_RELOAD);
 
     /* 第二行：技能相关 */
     mk("BUTTON", "查看技能树", BS_PUSHBUTTON, 282, 420, 96, 30, ID_TREE);
     mk("BUTTON", "解锁隐藏技", BS_PUSHBUTTON, 386, 420, 96, 30, ID_UNLOCK);
+    mk("BUTTON", "装备加成",   BS_PUSHBUTTON, 490, 420, 90, 30, ID_CACHE);
 
     /* 第三行：关于 / 退出 */
     mk("BUTTON", "关于",       BS_PUSHBUTTON, 282, 454, 66, 30, ID_ABOUT);
     mk("BUTTON", "退出",       BS_PUSHBUTTON, 356, 454, 66, 30, ID_QUIT);
+
+    /* 攻击/防御右侧的“装备 +N”分解标签（与上面字段循环的坐标对齐：
+     * 攻击是 i=5 -> row5 y=200；防御 i=6 -> row6 y=230；限值标签在 x=434） */
+    g.hEquipNote[0] = mk("STATIC", "", SS_LEFT, 498, 200, 78, 20, ID_EQNOTE0);
+    g.hEquipNote[1] = mk("STATIC", "", SS_LEFT, 498, 230, 78, 20, ID_EQNOTE0 + 1);
 
     /* ---- 页签：两个按钮切换两个页面（伪标签，不依赖 comctl32）---- */
     mk("BUTTON", "存档修改", BS_PUSHBUTTON, 12, 388, 118, 30, ID_TAB_SAVE);
@@ -1280,12 +1814,20 @@ static void create_children(HWND hwnd)
     mk("STATIC",
        "改的是游戏本体数据（GOODS.DAB），会影响所有存档。\n"
        "写入前自动备份，写后重读 200 件逐字段校验。",
-       SS_LEFT, 282, 216, 420, 46, ID_GB_WARN);
-    mk("BUTTON", "写入道具表", BS_PUSHBUTTON, 282, 272, 120, 30, ID_GB_SAVE);
+       SS_LEFT, 282, 264, 480, 44, ID_GB_WARN);
+    mk("BUTTON", "写入道具表", BS_PUSHBUTTON, 282, 316, 120, 30, ID_GB_SAVE);
+    mk("BUTTON", "恢复道具表", BS_PUSHBUTTON, 410, 316, 120, 30, ID_GB_RESTORE);
+    mk("STATIC", "说明：", SS_LEFT, 282, 356, 60, 20, 0);
+    mk("STATIC", "", SS_LEFT, 342, 356, 430, 56, ID_GB_DESC);
+    mk("STATIC", "", SS_LEFT, 282, 420, 540, 20, ID_GB_CHK);
 
     g.hStatus = mk("STATIC", "版本 " APP_VERSION " — 请先选择存档文件（可直接在左上角输入路径，再点「打开」）",
                    SS_LEFT | SS_LEFTNOWORDWRAP | SS_SUNKEN,
                    12, 488, 916, 22, ID_STATUS);
+
+    SetTimer(hwnd, 1, 200, NULL);   /* tooltip 轮询 */
+    /* 建完控件立刻定位到存档页：否则两页控件都带 WS_VISIBLE，会叠在一起 */
+    set_page(0);
 
     /* 填充下拉列表：索引 = 道具 id（0 = 空） */
     for (i = 0; i < SH_SLOT_COUNT; i++) {
@@ -1413,11 +1955,26 @@ static void do_uitest(HWND hwnd)
     /* case10：伪标签页切换 —— 可见性必须互斥，且状态栏/页签始终可见 */
     {
         int visSave1, visGoods1, visSave0, visGoods0, visStatus, visTab;
+        int initGoods, initSave, initMoney;
+
+        /* 启动态：只应有存档页（含金钱框）可见，道具页必须已隐藏 */
+        initGoods = (GetWindowLongA(g.hGbList, GWL_STYLE) & WS_VISIBLE) != 0;
+        initSave  = (GetWindowLongA(g.hEdit[0],  GWL_STYLE) & WS_VISIBLE) != 0;
+        initMoney = (GetWindowLongA(g.hMoney,    GWL_STYLE) & WS_VISIBLE) != 0;
+        fprintf(f, "case10 启动态: 道具列表可见=%d 存档字段可见=%d 金钱框可见=%d -> %s\r\n",
+                initGoods, initSave, initMoney,
+                (!initGoods && initSave && initMoney) ? "PASS" : "FAIL");
 
         set_page(1);
         visSave1  = (GetWindowLongA(g.hEdit[0], GWL_STYLE) & WS_VISIBLE) != 0;
         visGoods1 = (GetWindowLongA(g.hGbList, GWL_STYLE) & WS_VISIBLE) != 0;
         visStatus = (GetWindowLongA(g.hStatus, GWL_STYLE) & WS_VISIBLE) != 0;
+        /* 道具页上这些存档控件必须全隐藏，否则会叠在一起（旧版就是这样） */
+        if ((GetWindowLongA(g.hMoney,  GWL_STYLE) & WS_VISIBLE) ||
+            (GetWindowLongA(g.hSlot[0], GWL_STYLE) & WS_VISIBLE) ||
+            (GetWindowLongA(g.hHidden, GWL_STYLE) & WS_VISIBLE)) {
+            visSave1 = 1;   /* 复用为失败标记 */
+        }
         visTab    = (GetWindowLongA(GetDlgItem(g.hMain, ID_TAB_SAVE), GWL_STYLE) & WS_VISIBLE) != 0;
 
         set_page(0);
@@ -1428,6 +1985,267 @@ static void do_uitest(HWND hwnd)
                 visSave1, visGoods1, visSave0, visGoods0, visStatus, visTab,
                 (!visSave1 && visGoods1 && visSave0 && !visGoods0 && visStatus && visTab)
                 ? "PASS" : "FAIL");
+    }
+
+    /* case11：页签隔离不变量 —— 可见控件必须只属于当前页 */
+    {
+        HWND c;
+        int badGoods = 0, badSave = 0;
+
+        set_page(1);
+        for (c = GetWindow(g.hMain, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+            int id = GetDlgCtrlID(c);
+            int vis = (GetWindowLongA(c, GWL_STYLE) & WS_VISIBLE) != 0;
+            int isGoods;
+            if (!vis) continue;
+            if (id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS) continue;
+            isGoods = is_goods_id(id);
+            if (!isGoods) badGoods++;      /* 道具页上出现了存档控件 */
+        }
+
+        set_page(0);
+        for (c = GetWindow(g.hMain, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+            int id = GetDlgCtrlID(c);
+            int vis = (GetWindowLongA(c, GWL_STYLE) & WS_VISIBLE) != 0;
+            int isGoods;
+            if (!vis) continue;
+            if (id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS) continue;
+            isGoods = is_goods_id(id);
+            if (isGoods) badSave++;        /* 存档页上出现了道具控件 */
+        }
+
+        fprintf(f, "case11 页签隔离: 道具页残留存档控件=%d 存档页残留道具控件=%d -> %s\r\n",
+                badGoods, badSave, (badGoods == 0 && badSave == 0) ? "PASS" : "FAIL");
+    }
+
+    /* case12：道具名转码 —— 列表文字里不应出现 "?" 替换字符 */
+    {
+        do_goods();
+        if (s_gbLoaded && g.hGbList) {
+            char item[256];
+            int q = 0, k, len;
+            SendMessageA(g.hGbList, LB_GETTEXT, 0, (LPARAM)item);
+            len = (int)strlen(item);
+            for (k = 0; k < len; k++) if (item[k] == '?') q++;
+            /* 只报长度与 "?" 个数：item 已是 GBK，再 ansi() 会二次转码把日志弄乱 */
+            fprintf(f, "case12 道具名转码: 首项长度=%d \"?\"=%d -> %s\r\n",
+                    len, q, (len > 4 && q == 0) ? "PASS" : "FAIL");
+            set_page(0);
+        } else {
+            fprintf(f, "case12 道具名转码: SKIP（未载入道具表）\r\n");
+        }
+    }
+
+    /* case21：页面归属与 ID 遮蔽 —— 存档页控件不能被判成道具页，ID 也不能被别的控件抢走 */
+    {
+        int bad = 0;
+        if (is_goods_id(ID_CACHE))      bad |= 1;   /* 装备加成按钮应属存档页 */
+        if (is_goods_id(ID_EQNOTE0))    bad |= 2;   /* 分解标签应属存档页 */
+        if (is_goods_id(ID_EQNOTE0 + 1)) bad |= 4;
+        if (!is_goods_id(ID_GB_LIST))   bad |= 8;   /* 道具页控件应属道具页 */
+        if (!is_goods_id(ID_GB_DESC))   bad |= 16;
+        if (!is_goods_id(ID_GB_CHK))    bad |= 32;
+        if (!is_goods_id(ID_GB_RESTORE)) bad |= 64;
+        /* GetDlgItem 跑到分解标签上 = ID 撞了，说明文字会被写错地方 */
+        if (GetDlgItem(g.hMain, ID_GB_DESC) == g.hEquipNote[0]) bad |= 128;
+        if (GetDlgItem(g.hMain, ID_GB_CHK)  == g.hEquipNote[1]) bad |= 256;
+        /* 分块契约：15000–19999 是道具页，边界两侧必须泾渭分明 */
+        if (is_goods_id(14999)) bad |= 512;
+        if (!is_goods_id(15000)) bad |= 1024;
+        if (!is_goods_id(19999)) bad |= 2048;
+        if (is_goods_id(20000)) bad |= 4096;
+        if (is_goods_id(ID_PATH) || is_goods_id(ID_LIST) || is_goods_id(ID_CACHE) ||
+            is_goods_id(ID_EQNOTE0) || is_goods_id(ID_STATUS)) bad |= 8192;
+        /* WM_COMMAND 只取 LOWORD(16 位)，ID 必须 < 65536 */
+        if (ID_PATH >= 65536 || ID_CA_CANCEL >= 65536) bad |= 16384;
+        fprintf(f, "case21 页面归属/ID遮蔽: bad=0x%X -> %s\r\n", bad, bad == 0 ? "PASS" : "FAIL");
+    }
+
+    /* case20：攻击/防御分解标签 —— 应等于三槽缓存之和（跳过空槽） */
+    {
+        char t[64];
+        int k, sa = 0, sd = 0;
+        const sh_unit *uu = &g.s.units[g.sel];
+        for (k = 0; k < 3; k++) {
+            if (uu->slots[k] == 0) continue;
+            sa += sh_slot_cache_get(&g.s, g.sel, k, SH_CACHE_ATK);
+            sd += sh_slot_cache_get(&g.s, g.sel, k, SH_CACHE_DEF);
+        }
+        sprintf(t, "装备+%d", sa);
+        GetWindowTextA(g.hEquipNote[0], t + 32, 24);
+        fprintf(f, "case20 装备分解标签: atk=%d 标签文本长度=%d -> %s\r\n",
+                sa, (int)strlen(t + 32),
+                (strlen(t + 32) > 0) ? "PASS" : "FAIL");
+    }
+
+    /* case19：控件 ID 唯一性 —— 道具页的 ID 段曾经重叠过，导致文字画到别的控件上 */
+    {
+        HWND hs[32];
+        int n = 0, i, j, dup = 0;
+        hs[n++] = GetDlgItem(g.hMain, ID_GB_LIST);
+        hs[n++] = GetDlgItem(g.hMain, ID_GB_SAVE);
+        hs[n++] = GetDlgItem(g.hMain, ID_GB_RESTORE);
+        hs[n++] = GetDlgItem(g.hMain, ID_GB_WARN);
+        hs[n++] = GetDlgItem(g.hMain, ID_GB_DESC);
+        hs[n++] = GetDlgItem(g.hMain, ID_GB_CHK);
+        for (i = 0; i < SH_GF_COUNT; i++) {
+            hs[n++] = GetDlgItem(g.hMain, ID_GB_LAB0 + i);
+            hs[n++] = GetDlgItem(g.hMain, ID_GB_EDIT0 + i);
+            hs[n++] = GetDlgItem(g.hMain, ID_GB_RNG0 + i);
+        }
+        for (i = 0; i < n; i++) {
+            if (!hs[i]) { dup++; continue; }
+            for (j = i + 1; j < n; j++) if (hs[i] == hs[j]) dup++;
+        }
+        fprintf(f, "case19 控件ID唯一性: 检查 %d 个句柄 重复/缺失 %d -> %s\r\n",
+                n, dup, dup == 0 ? "PASS" : "FAIL");
+    }
+
+    /* case18：道具的 敏捷(+96) / 必殺(+100) 字段读写 */
+    {
+        char gp[600];
+        sh_goods g;
+        if (goods_locate(gp, sizeof(gp)) && sh_goods_load(gp, &g) == 0) {
+            int a0 = sh_goods_get(&g, 12, SH_GF_AGI), c0 = sh_goods_get(&g, 12, SH_GF_CRIT);
+            int a1, c1;
+            sh_goods_set(&g, 12, SH_GF_AGI, 7);
+            sh_goods_set(&g, 12, SH_GF_CRIT, 8);
+            a1 = sh_goods_get(&g, 12, SH_GF_AGI);
+            c1 = sh_goods_get(&g, 12, SH_GF_CRIT);
+            sh_goods_set(&g, 12, SH_GF_AGI, a0);      /* 复原内存，不写盘 */
+            sh_goods_set(&g, 12, SH_GF_CRIT, c0);
+            sh_goods_free(&g);
+            fprintf(f, "case18 敏捷/必殺字段: 读回 %d/%d(期望7/8) -> %s\r\n",
+                    a1, c1, (a1 == 7 && c1 == 8) ? "PASS" : "FAIL");
+        } else {
+            fprintf(f, "case18 敏捷/必殺字段: SKIP（找不到 GOODS.DAB）\r\n");
+        }
+    }
+
+    /* case17：装备加成缓存读写（攻击=槽+2、防御=槽+6） */
+    {
+        int old_a, old_d, got_a, got_d;
+        old_a = sh_slot_cache_get(&g.s, g.sel, 0, SH_CACHE_ATK);
+        old_d = sh_slot_cache_get(&g.s, g.sel, 1, SH_CACHE_DEF);
+        sh_slot_cache_set(&g.s, g.sel, 0, SH_CACHE_ATK, 42);
+        sh_slot_cache_set(&g.s, g.sel, 1, SH_CACHE_DEF, 43);
+        got_a = sh_slot_cache_get(&g.s, g.sel, 0, SH_CACHE_ATK);
+        got_d = sh_slot_cache_get(&g.s, g.sel, 1, SH_CACHE_DEF);
+        sh_slot_cache_set(&g.s, g.sel, 0, SH_CACHE_ATK, old_a);
+        sh_slot_cache_set(&g.s, g.sel, 1, SH_CACHE_DEF, old_d);
+        fprintf(f, "case17 装备缓存: 写42/43 读回%d/%d -> %s\r\n",
+                got_a, got_d, (got_a == 42 && got_d == 43) ? "PASS" : "FAIL");
+    }
+
+    /* case16：加载别名 —— 把 g.path 直接当路径再读一次（恢复流程就是这么做的） */
+    {
+        char gp[600];
+        sh_goods g;
+        if (goods_locate(gp, sizeof(gp)) && sh_goods_load(gp, &g) == 0) {
+            int rc2 = sh_goods_load(g.path, &g);   /* 关键：路径指向 g 自己 */
+            fprintf(f, "case16 路径别名重载: rc=%d -> %s\r\n",
+                    rc2, rc2 == 0 ? "PASS" : "FAIL");
+            sh_goods_free(&g);
+        } else {
+            fprintf(f, "case16 路径别名重载: SKIP（找不到 GOODS.DAB）\r\n");
+        }
+    }
+
+    /* case15：道具表备份枚举 —— 按时间倒序、最新优先 */
+    {
+        char dir[MAX_PATH], gp[600], b1[MAX_PATH], b2[MAX_PATH], src[MAX_PATH];
+        int n, newestIsB2 = 0;
+
+        sh_goods gbt;
+        if (goods_locate(gp, sizeof(gp)) && sh_goods_load(gp, &gbt) == 0) {
+            GetTempPathA(sizeof(dir), dir);
+            sprintf(dir, "%s_shuihu_bak_test", dir);
+            CreateDirectoryA(dir, NULL);
+            {
+                sprintf(src, "%s\\GOODS.DAB", dir);
+                CopyFileA(gp, src, FALSE);
+                sprintf(b1, "%s\\GOODS.DAB_20260101-010101.bak", dir);
+                CopyFileA(gp, b1, FALSE);
+                {   /* CopyFile 会保留源文件时间，这里改写 1 字节把 mtime 顶新 */
+                    HANDLE hf = CreateFileA(b1, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                                            FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (hf != INVALID_HANDLE_VALUE) {
+                        DWORD w = 0; unsigned char c0 = 0;
+                        SetFilePointer(hf, 0, NULL, FILE_BEGIN);
+                        WriteFile(hf, &c0, 1, &w, NULL);
+                        CloseHandle(hf);
+                    }
+                }
+                Sleep(1100);
+                sprintf(b2, "%s\\GOODS.DAB_20260101-020202.bak", dir);
+                CopyFileA(gp, b2, FALSE);
+                {
+                    HANDLE hf = CreateFileA(b2, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                                            FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (hf != INVALID_HANDLE_VALUE) {
+                        DWORD w = 0; unsigned char c0 = 0;
+                        SetFilePointer(hf, 0, NULL, FILE_BEGIN);
+                        WriteFile(hf, &c0, 1, &w, NULL);
+                        CloseHandle(hf);
+                    }
+                }
+            }
+            sh_goods_free(&gbt);
+
+            n = collect_goods_backups(src);
+            if (n > 0) newestIsB2 = (strstr(s_bakPath[0], "020202") != NULL);
+            fprintf(f, "case15 道具备份枚举: 找到=%d(期望2) 最新是B2=%d -> %s\r\n",
+                    n, newestIsB2, (n == 2 && newestIsB2) ? "PASS" : "FAIL");
+
+            DeleteFileA(b1);
+            DeleteFileA(b2);
+            DeleteFileA(src);
+            RemoveDirectoryA(dir);
+        } else {
+            fprintf(f, "case15 道具备份枚举: SKIP（找不到 GOODS.DAB）\r\n");
+        }
+    }
+
+    /* case14：说明与字段一致性提示（正常应一致；篡改字段应报不匹配） */
+    {
+        do_goods();
+        if (s_gbLoaded) {
+            char cm[300];
+            int bad0, bad1, back;
+
+            /* 打狗棒说明「攻擊力加30」，字段也是 30 → 应一致 */
+            bad0 = goods_check(22, cm, sizeof(cm));
+
+            /* 临时改成 99，应报「说明写 30，字段是 99」 */
+            back = sh_goods_get(&s_gb, 22, SH_GF_ATK);
+            sh_goods_set(&s_gb, 22, SH_GF_ATK, 99);
+            bad1 = goods_check(22, cm, sizeof(cm));
+            sh_goods_set(&s_gb, 22, SH_GF_ATK, back);      /* 复原，避免影响后续 */
+
+            fprintf(f, "case14 一致性提示: 正常=%d 篡改=%d 提示=\"%s\" -> %s\r\n",
+                    bad0, bad1, cm, (bad0 == 0 && bad1 > 0) ? "PASS" : "FAIL");
+            set_page(0);
+        } else {
+            fprintf(f, "case14 一致性提示: SKIP（未载入道具表）\r\n");
+        }
+    }
+
+    /* case13：道具说明 —— 选中「人肉包子」应显示其 Big5 说明文本 */
+    {
+        do_goods();
+        if (s_gbLoaded) {
+            char d[400];
+            int q = 0, k, len;
+            gb_show_item(177);
+            GetWindowTextA(GetDlgItem(g.hMain, ID_GB_DESC), d, sizeof(d));
+            len = (int)strlen(d);
+            for (k = 0; k < len; k++) if (d[k] == '?') q++;
+            fprintf(f, "case13 道具说明: 长度=%d \"?\"=%d -> %s\r\n",
+                    len, q, (len >= 6 && q == 0) ? "PASS" : "FAIL");
+            set_page(0);
+        } else {
+            fprintf(f, "case13 道具说明: SKIP（未载入道具表）\r\n");
+        }
     }
 
     /* case9：GOODS.DAB 读/改/写/校验（只操作临时副本） */
@@ -1614,12 +2432,59 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
         create_children(hwnd);
         return 0;
 
+    case WM_TIMER:
+        if (wp == 1 && g.page == 0 && GetActiveWindow() == g.hMain) {
+            sh_tip_item map[4];
+            static const char *tAtk =
+                "攻击力（面板结果值）\n"
+                "面板 = 基础 + 三个装备槽的加成之和。\n"
+                "这里存的是游戏算完的结果：读档直接显示，但任何重算\n"
+                "（装备/卸下/升级）都会按「基础 + 装备加成」覆盖它。\n"
+                "想让攻击力持久生效，请用下方的「装备加成」按钮。";
+            static const char *tDef =
+                "防御力（面板结果值）\n"
+                "同上：这里是结果，不是输入；重算会被「基础 + 装备加成」覆盖。\n"
+                "要持久改防御，请用「装备加成」按钮改防御缓存。";
+            static const char *tNoteA =
+                "这三个数来自装备槽的「攻击缓存」，是持久的（每次重算都计入）。\n"
+                "点「装备加成」可以逐槽修改。\n"
+                "基础部分由游戏按职业和等级计算，不存盘，工具改不了。";
+            static const char *tNoteD =
+                "这三个数来自装备槽的「防御缓存」，同样持久。\n"
+                "点「装备加成」可逐槽修改。";
+            map[0].h = g.hEdit[5];      map[0].text = tAtk;    /* 攻击 */
+            map[1].h = g.hEdit[6];      map[1].text = tDef;    /* 防御 */
+            map[2].h = g.hEquipNote[0]; map[2].text = tNoteA;
+            map[3].h = g.hEquipNote[1]; map[3].text = tNoteD;
+            tip_poll(map, 4);
+        }
+        else if (wp == 1 && g.page == 1 && GetActiveWindow() == g.hMain) {
+            static const char *t[SH_GF_COUNT] = {
+                "攻击力：道具的原始值（GOODS +76）\n"
+                "只在道具被获得的那一刻复制进槽位缓存。\n"
+                "对已经拿在手里的道具，改这里无效 —— 请用存档页的「装备加成」。",
+                "防御力：道具的原始值（GOODS +84）\n"
+                "同上：只在获得时进入槽位缓存，已持有的道具改了也不会变。",
+                "敏捷（GOODS +96）\n每次重算都直接读 GOODS，改完立即生效。",
+                "必殺（GOODS +100）\n每次重算都直接读 GOODS，改完立即生效。",
+                "移动加成（GOODS +104，有符号）\n每次重算都直接读 GOODS，改完立即生效。",
+                "最大体力（GOODS +110）\n每次重算都直接读 GOODS，改完立即生效。",
+                "最大气力（GOODS +112）\n每次重算都直接读 GOODS，改完立即生效。"
+            };
+            sh_tip_item map[SH_GF_COUNT];
+            int i;
+            for (i = 0; i < SH_GF_COUNT; i++) { map[i].h = g.hGbEdit[i]; map[i].text = t[i]; }
+            tip_poll(map, SH_GF_COUNT);
+        }
+        return 0;
+
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case ID_BROWSE:  do_browse();    return 0;
         case ID_OPEN:    do_open();      return 0;
         case ID_WRITE:   do_write();     return 0;
         case ID_UNLOCK:  do_unlock();    return 0;
+        case ID_CACHE:   do_cache_edit(); return 0;
         case ID_TREE:    do_skilltree(); return 0;
         case ID_RESTORE: do_restore();   return 0;
         case ID_RELOAD:  do_reload();    return 0;
@@ -1633,6 +2498,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
         case ID_GB_SAVE:
             if (gb_apply()) gb_commit();
             return 0;
+        case ID_GB_RESTORE: do_goods_restore(); return 0;
         case ID_GB_LIST:
             if (HIWORD(wp) == LBN_SELCHANGE) {
                 int row = (int)SendMessageA(g.hGbList, LB_GETCURSEL, 0, 0);

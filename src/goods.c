@@ -8,6 +8,7 @@ extern const char        *SH_ITEM_NAMES[];
 extern const unsigned char SH_ITEM_EQ[];
 extern const unsigned char SH_ITEM_MAJOR[];
 extern const signed char   SH_ITEM_MOVE[];
+extern const char *SH_ITEM_DESC[];
 
 int sh_item_count(void)
 {
@@ -58,6 +59,12 @@ int sh_item_move(int id)
 {
     if (id < 1 || id > SH_ITEM_COUNT) return 0;
     return (int)SH_ITEM_MOVE[id - 1];
+}
+
+const char *sh_item_desc(int id)
+{
+    if (id < 1 || id > SH_ITEM_COUNT) return "";
+    return SH_ITEM_DESC[id - 1];
 }
 
 int sh_slot_kind(int slot)

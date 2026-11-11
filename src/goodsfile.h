@@ -26,11 +26,13 @@
 #define SH_GOODS_PATH 512
 
 typedef enum {
-    SH_GF_ATK = 0,   /* +76  u16 */
-    SH_GF_DEF,       /* +84  u16 */
-    SH_GF_MOVE,      /* +104 s16 */
-    SH_GF_HPMAX,     /* +110 u16 */
-    SH_GF_MPMAX,     /* +112 u16 */
+    SH_GF_ATK = 0,   /* +76  u16 攻击力 */
+    SH_GF_DEF,       /* +84  u16 防御力 */
+    SH_GF_AGI,       /* +96  u16 敏捷（v2.4） */
+    SH_GF_CRIT,      /* +100 u16 必殺（v2.4） */
+    SH_GF_MOVE,      /* +104 s16 移动加成 */
+    SH_GF_HPMAX,     /* +110 u16 最大体力 */
+    SH_GF_MPMAX,     /* +112 u16 最大气力 */
     SH_GF_COUNT
 } sh_goods_field;
 
@@ -53,6 +55,12 @@ int  sh_goods_field_min(sh_goods_field f);
 int  sh_goods_field_max(sh_goods_field f);
 
 int  sh_goods_get(const sh_goods *g, int id, sh_goods_field f);
+/* 直接按记录内偏移读一个 u16（用于访问未枚举的字段，如 +82/+90） */
+int  sh_goods_get_u16(const sh_goods *g, int id, int off);
+
+/* 从存档路径推断 GOODS.DAB：<存档目录>\..\Data\、<存档目录>\Data\、<存档目录>\。
+ * 成功返回 1 并写入 out。 */
+int  sh_goods_locate(const char *savePath, char *out, size_t n);
 /* 只改内存（不落盘）。成功 0；-1 参数非法；-2 超范围 */
 int  sh_goods_set(sh_goods *g, int id, sh_goods_field f, int v);
 

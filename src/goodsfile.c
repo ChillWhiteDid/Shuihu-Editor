@@ -33,11 +33,17 @@ int sh_goods_load(const char *path, sh_goods *g)
     FILE *f;
     long sz;
     size_t got;
+    char safe[SH_GOODS_PATH];
 
     if (!path || !g) return -1;
+
+    /* 先把路径拷出来：调用方可能传 g->path，下面的 memset 会把它清零 */
+    strncpy(safe, path, sizeof(safe) - 1);
+    safe[sizeof(safe) - 1] = '\0';
+
     memset(g, 0, sizeof(*g));
 
-    f = fopen(path, "rb");
+    f = fopen(safe, "rb");
     if (!f) return -1;
 
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
@@ -64,7 +70,7 @@ int sh_goods_load(const char *path, sh_goods *g)
     g->count = (int)((g->size - SH_GOODS_HEAD) / SH_GOODS_REC);
     if (g->count > SH_GOODS_MAX) g->count = SH_GOODS_MAX;
 
-    strncpy(g->path, path, SH_GOODS_PATH - 1);
+    strncpy(g->path, safe, SH_GOODS_PATH - 1);
     g->path[SH_GOODS_PATH - 1] = '\0';
     return 0;
 }
@@ -84,6 +90,8 @@ const char *sh_goods_field_label(sh_goods_field f)
     switch (f) {
     case SH_GF_ATK:   return "攻击力";
     case SH_GF_DEF:   return "防御力";
+    case SH_GF_AGI:   return "敏捷";
+    case SH_GF_CRIT:  return "必殺";
     case SH_GF_MOVE:  return "移动加成";
     case SH_GF_HPMAX: return "最大体力";
     case SH_GF_MPMAX: return "最大气力";
@@ -96,6 +104,8 @@ const char *sh_goods_field_key(sh_goods_field f)
     switch (f) {
     case SH_GF_ATK:   return "atk";
     case SH_GF_DEF:   return "def";
+    case SH_GF_AGI:   return "agi";
+    case SH_GF_CRIT:  return "crit";
     case SH_GF_MOVE:  return "move";
     case SH_GF_HPMAX: return "hpmax";
     case SH_GF_MPMAX: return "mpmax";
@@ -108,6 +118,8 @@ int sh_goods_field_off(sh_goods_field f)
     switch (f) {
     case SH_GF_ATK:   return 76;
     case SH_GF_DEF:   return 84;
+    case SH_GF_AGI:   return 96;
+    case SH_GF_CRIT:  return 100;
     case SH_GF_MOVE:  return 104;
     case SH_GF_HPMAX: return 110;
     case SH_GF_MPMAX: return 112;
@@ -125,7 +137,9 @@ int sh_goods_field_max(sh_goods_field f)
 {
     switch (f) {
     case SH_GF_ATK:
-    case SH_GF_DEF:   return 255;      /* 角色属性上限 */
+    case SH_GF_DEF:
+    case SH_GF_AGI:
+    case SH_GF_CRIT:  return 255;      /* 角色属性上限 */
     case SH_GF_MOVE:  return 30;
     case SH_GF_HPMAX:
     case SH_GF_MPMAX: return 510;
@@ -149,6 +163,13 @@ int sh_goods_get(const sh_goods *g, int id, sh_goods_field f)
     return (int)rd16(r + sh_goods_field_off(f));
 }
 
+int sh_goods_get_u16(const sh_goods *g, int id, int off)
+{
+    uint8_t *r = rec_of(g, id);
+    if (!r || off < 0 || off + 1 >= SH_GOODS_REC) return 0;
+    return (int)rd16(r + off);
+}
+
 int sh_goods_set(sh_goods *g, int id, sh_goods_field f, int v)
 {
     uint8_t *r = rec_of(g, id);
@@ -156,6 +177,35 @@ int sh_goods_set(sh_goods *g, int id, sh_goods_field f, int v)
     if (v < sh_goods_field_min(f) || v > sh_goods_field_max(f)) return -2;
 
     wr16(r + sh_goods_field_off(f), (uint16_t)(int16_t)v);
+    return 0;
+}
+
+/* 从存档路径推断 GOODS.DAB 的位置（与游戏目录布局一致） */
+int sh_goods_locate(const char *savePath, char *out, size_t n)
+{
+    char dir[SH_GOODS_PATH], cand[SH_GOODS_PATH + 32];
+    char *p;
+    FILE *f;
+
+    if (!savePath || !savePath[0] || !out || n == 0) return 0;
+
+    strncpy(dir, savePath, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = '\0';
+    p = strrchr(dir, SH_SEP);
+    if (p) *p = '\0'; else strcpy(dir, ".");
+
+    sprintf(cand, "%s%c..%cData%cGOODS.DAB", dir, SH_SEP, SH_SEP, SH_SEP);
+    f = fopen(cand, "rb");
+    if (f) { fclose(f); strncpy(out, cand, n - 1); out[n - 1] = '\0'; return 1; }
+
+    sprintf(cand, "%s%cData%cGOODS.DAB", dir, SH_SEP, SH_SEP);
+    f = fopen(cand, "rb");
+    if (f) { fclose(f); strncpy(out, cand, n - 1); out[n - 1] = '\0'; return 1; }
+
+    sprintf(cand, "%s%cGOODS.DAB", dir, SH_SEP);
+    f = fopen(cand, "rb");
+    if (f) { fclose(f); strncpy(out, cand, n - 1); out[n - 1] = '\0'; return 1; }
+
     return 0;
 }
 

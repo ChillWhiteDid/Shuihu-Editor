@@ -106,11 +106,12 @@ static void usage(void)
     printf("  shuihu-save -unlock-hidden <save> <类型id> [-y]\n");
     printf("  shuihu-save -items <save> <类型id>               列出 7 个槽（含道具名）\n");
     printf("  shuihu-save -slot <save> <类型id> <槽0-6> <道具id> [-y]   改某个槽\n");
+    printf("  shuihu-save -cache <save> <类型id> <槽0-6> <atk|def> <值> [-y]   改装备加成缓存\n");
     printf("  shuihu-save -tree <save> <类型id>               查看技能树\n");
     printf("\n-- 道具表（改游戏本体数据，不影响单个存档）--\n");
     printf("  shuihu-save -goods <GOODS.DAB>                  列出 200 件道具\n");
     printf("  shuihu-save -goods-set <GOODS.DAB> <id> <字段> <值> [-y]\n");
-    printf("    字段: atk def move hpmax mpmax\n");
+    printf("    字段: atk def agi crit move hpmax mpmax\n");
     printf("\n字段名: level hp hpmax mp mpmax atk def hit agi crit exp expnext move\n");
     printf("不加 -y 时只显示计划（干跑），不会改动任何文件。\n");
 }
@@ -238,13 +239,13 @@ static void print_table_head(void)
 {
     if (!g_wide) {
         printf("\n  ID 名字       等  生命      气力      攻  防  命  敏  杀  经验     移\n");
-        printf("  -------------------------------------------------------------------\n");
+            printf("  -----------------------------------------------------------------------------\n");
         return;
     }
     printf("\n  id ");
     padout("名字", 9);
     printf("等  生命        气力        攻  防  命  敏  杀  经验     移  槽/隐藏技\n");
-    printf("  -------------------------------------------------------------------------------\n");
+            printf("  -----------------------------------------------------------------------------\n");
 }
 
 static int parse_field(const char *s, sh_field *out)
@@ -348,17 +349,40 @@ int main(int argc, char **argv)
 
         if (strcmp(cmd, "-goods") == 0) {
             int id;
+            /* -goods <DAB> <id>：只看一件，连说明一起打印 */
+            if (argc >= 4 && argv[3][0] >= '0' && argv[3][0] <= '9') {
+                int want = atoi(argv[3]);
+                if (want < 1 || want > gb.count) {
+                    printf("道具 id 必须 1..%d\n", gb.count);
+                    sh_goods_free(&gb);
+                    return 1;
+                }
+                printf("ID    : %d\n", want);
+                printf("名字  : %s\n", sh_item_name(want));
+                printf("说明  : %s\n", sh_item_desc(want));
+                printf("攻击  : %d\n", sh_goods_get(&gb, want, SH_GF_ATK));
+                printf("防御  : %d\n", sh_goods_get(&gb, want, SH_GF_DEF));
+                printf("敏捷  : %d\n", sh_goods_get(&gb, want, SH_GF_AGI));
+                printf("必殺  : %d\n", sh_goods_get(&gb, want, SH_GF_CRIT));
+                printf("移动  : %d\n", sh_goods_get(&gb, want, SH_GF_MOVE));
+                printf("最大体: %d\n", sh_goods_get(&gb, want, SH_GF_HPMAX));
+                printf("最大气: %d\n", sh_goods_get(&gb, want, SH_GF_MPMAX));
+                sh_goods_free(&gb);
+                return 0;
+            }
             printf("文件   : %s\n", gp);
             printf("大小   : %lu 字节（11 + %d × 198）\n",
                    (unsigned long)gb.size, gb.count);
-            printf("\n  ID 名字                          类型   攻击  防御  移动  最大体 最大气\n");
-            printf("  ---------------------------------------------------------------------\n");
+            printf("\n  ID 名字                          类型   攻击  防御  敏捷  必殺  移动  最大体 最大气\n");
+            printf("  -----------------------------------------------------------------------------\n");
             for (id = 1; id <= gb.count; id++) {
-                printf("  %3d %-28s %4d %5d %5d %5d %5d %5d\n",
+                printf("  %3d %-28s %4d %5d %5d %5d %5d %5d %5d %5d\n",
                        id, sh_item_name(id),
                        (int)gb.data[SH_GOODS_HEAD + (size_t)(id - 1) * SH_GOODS_REC],
                        sh_goods_get(&gb, id, SH_GF_ATK),
                        sh_goods_get(&gb, id, SH_GF_DEF),
+                       sh_goods_get(&gb, id, SH_GF_AGI),
+                       sh_goods_get(&gb, id, SH_GF_CRIT),
                        sh_goods_get(&gb, id, SH_GF_MOVE),
                        sh_goods_get(&gb, id, SH_GF_HPMAX),
                        sh_goods_get(&gb, id, SH_GF_MPMAX));
@@ -375,7 +399,7 @@ int main(int argc, char **argv)
 
             if (argc < 6) {
                 printf("用法: -goods-set <GOODS.DAB> <id> <字段> <值> [-y]\n");
-                printf("字段: atk def move hpmax mpmax\n");
+                printf("字段: atk def agi crit move hpmax mpmax\n");
                 sh_goods_free(&gb);
                 return 1;
             }
@@ -386,7 +410,7 @@ int main(int argc, char **argv)
                 }
             }
             if (found < 0) {
-                printf("未知字段: %s（可用 atk def move hpmax mpmax）\n", argv[4]);
+                printf("未知字段: %s（可用 atk def agi crit move hpmax mpmax）\n", argv[4]);
                 sh_goods_free(&gb);
                 return 1;
             }
@@ -648,8 +672,72 @@ int main(int argc, char **argv)
                    sh_kind_label(sh_item_kind(item)), sh_kind_label(sh_slot_kind(slot)));
         }
 
-        if (sh_set_slot(&s, idx, slot, (uint8_t)item) != 0) {
-            printf("[拒绝] 写入失败（槽或下标非法）\n"); sh_free(&s); return 1;
+        {
+            int olditem = (int)s.units[idx].slots[slot];
+            if (sh_set_slot(&s, idx, slot, (uint8_t)item) != 0) {
+                printf("[拒绝] 写入失败（槽或下标非法）\n"); sh_free(&s); return 1;
+            }
+            /* 道具换了就把槽位缓存按 GOODS 重填（等同游戏“获得道具”）；
+             * 否则新装装备的加成为 0，进游戏会看到“装上了攻击力却没变”。 */
+            if (item != olditem) {
+                char gpath[600];
+                sh_goods gb;
+                if (sh_goods_locate(path, gpath, sizeof(gpath)) &&
+                    sh_goods_load(gpath, &gb) == 0) {
+                    unsigned short c4[4];
+                    int k;
+                    static const int offs[4] = { 76, 82, 84, 90 };
+                    for (k = 0; k < 4; k++)
+                        c4[k] = (unsigned short)sh_goods_get_u16(&gb, item, offs[k]);
+                    sh_slot_cache_set4(&s, idx, slot, c4);
+                    sh_goods_free(&gb);
+                    printf("[缓存] 装备加成已按 GOODS 重填：攻击 +%u\n", (unsigned)c4[0]);
+                } else {
+                    unsigned short zero[4] = { 0, 0, 0, 0 };
+                    sh_slot_cache_set4(&s, idx, slot, zero);
+                    printf("[警告] 找不到 GOODS.DAB，槽位缓存已清零（可用 -cache 手动设置）\n");
+                }
+            }
+        }
+        if (!do_yes) { printf("[干跑] 未加 -y，未改动任何文件。\n"); sh_free(&s); return 0; }
+        rc = commit(&s, path, 1);
+        sh_free(&s);
+        return rc == 0 ? 0 : 1;
+    }
+    if (strcmp(cmd, "-cache") == 0) {
+        int idx, id, slot, which, v, old;
+        if (argc < 7) {
+            printf("用法: -cache <save> <类型id> <槽0-6> <atk|def> <值> [-y]\n");
+            sh_free(&s);
+            return 2;
+        }
+        id    = atoi(argv[3]);
+        slot  = atoi(argv[4]);
+        if (strcmp(argv[5], "atk") == 0) which = SH_CACHE_ATK;
+        else if (strcmp(argv[5], "def") == 0) which = SH_CACHE_DEF;
+        else { printf("第 5 个参数应为 atk 或 def\n"); sh_free(&s); return 2; }
+        v = atoi(argv[6]);
+        if (slot < 0 || slot >= SH_SLOT_COUNT) {
+            printf("槽序号应为 0..%d\n", SH_SLOT_COUNT - 1); sh_free(&s); return 2;
+        }
+        idx = sh_find_unit(&s, id);
+        if (idx < 0) {
+            printf("存档里没有类型 id = %d 的角色（%s）\n", id, sh_char_name(id));
+            sh_free(&s); return 1;
+        }
+        old = sh_slot_cache_get(&s, idx, slot, which);
+        printf("[计划] %s(id %d) 槽%d %s缓存: %d → %d",
+               sh_char_name(id), id, slot,
+               which == SH_CACHE_ATK ? "攻击" : "防御", old, v);
+        if (s.units[idx].slots[slot] == 0) {
+            printf("  [注意] 该槽是空的，缓存不参与面板计算");
+        }
+        printf("\n");
+        if (v < 0 || v > 65535) {
+            printf("[拒绝] 超出范围 0..65535\n"); sh_free(&s); return 1;
+        }
+        if (sh_slot_cache_set(&s, idx, slot, which, v) != 0) {
+            printf("[拒绝] 写入失败\n"); sh_free(&s); return 1;
         }
         if (!do_yes) { printf("[干跑] 未加 -y，未改动任何文件。\n"); sh_free(&s); return 0; }
         rc = commit(&s, path, 1);
