@@ -81,6 +81,8 @@ int  sh_human_skill_off(const sh_human *h, int id, int i);   /* data 内偏移�
 int  sh_human_skill_sid(const sh_human *h, int id, int i);
 int  sh_human_skill_level(const sh_human *h, int id, int i);
 int  sh_human_skill_hidden(const sh_human *h, int id, int i);
+int  sh_human_skill_cat(const sh_human *h, int id, int i);    /* +0x02 技能类别 */
+int  sh_human_skill_cost(const sh_human *h, int id, int i);   /* +0x12 气力消耗 u16 */
 int  sh_human_skill_hidden_count(const sh_human *h, int id);
 int  sh_human_skill_level_max(void);   /* 30 */
 
@@ -88,6 +90,7 @@ int  sh_human_skill_level_max(void);   /* 30 */
 int  sh_human_set_skill_sid(sh_human *h, int id, int i, int v);
 int  sh_human_set_skill_level(sh_human *h, int id, int i, int v);
 int  sh_human_set_skill_hidden(sh_human *h, int id, int i, int v);
+int  sh_human_set_skill_cost(sh_human *h, int id, int i, int v);   /* 0..999 */
 
 /* 整条导入：把 src 职业 src_cls 的第 src_i 条 58 字节原样复制到
  * dst 职业 dst_cls 的第 dst_i 条（同一文件内也允许，内部用 memmove）。

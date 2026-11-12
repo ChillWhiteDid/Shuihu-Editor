@@ -99,6 +99,7 @@
 #define ID_HS_SID      21410  /* 技能字符串 id */
 #define ID_HS_LEVEL    21411  /* 学习等级 */
 #define ID_HS_HIDDEN   21412  /* 隐藏技标志 0/1 */
+#define ID_HS_COST     21414  /* 气力消耗 */
 #define ID_HS_SAVE     21420  /* 写入文件 */
 #define ID_HS_IMPORT   21413  /* 整条导入技能 */
 #define ID_HS_CLOSE    21421  /* 关闭 */
@@ -1851,7 +1852,7 @@ static void do_human_restore(HWND owner)
 /* ---------------- 技能表（HUMAN.HUM 每职业 n 条 58 B 子项） ----------------
  * 可改：技能字符串 id(+0x00)、隐藏标志(+0x05)、学习等级(+0x11)。
  * 子项个数 n(+0x2D) 属于文件布局，只读。 */
-static HWND s_hsWnd, s_hsList, s_hsSid, s_hsLvl, s_hsHid;
+static HWND s_hsWnd, s_hsList, s_hsSid, s_hsLvl, s_hsHid, s_hsCost;
 static int  s_hsSel = -1, s_hsCls = -1;
 
 static void hs_fill_list(void)
@@ -1863,8 +1864,10 @@ static void hs_fill_list(void)
         char row[260];
         int sid = sh_human_skill_sid(&s_hum, s_hsCls, i);
         const char *nm = sh_skill_name(sid);
-        sprintf(row, "%02d  %s   Lv%d%s", i + 1, (nm && nm[0]) ? nm : "?",
+        sprintf(row, "%02d  %s  Lv%d 类%d 气%d%s", i + 1, (nm && nm[0]) ? nm : "?",
                 sh_human_skill_level(&s_hum, s_hsCls, i),
+                sh_human_skill_cat(&s_hum, s_hsCls, i),
+                sh_human_skill_cost(&s_hum, s_hsCls, i),
                 i == 0 ? "   [默认技]"
                        : (sh_human_skill_hidden(&s_hum, s_hsCls, i) ? "   [隐藏]" : ""));
         SendMessageA(s_hsList, LB_ADDSTRING, 0, (LPARAM)ansi(row));
@@ -1881,6 +1884,8 @@ static void hs_show(int i)
     SetWindowTextA(s_hsLvl, b);
     sprintf(b, "%d", sh_human_skill_hidden(&s_hum, s_hsCls, i));
     SetWindowTextA(s_hsHid, b);
+    sprintf(b, "%d", sh_human_skill_cost(&s_hum, s_hsCls, i));
+    SetWindowTextA(s_hsCost, b);
     /* 第 1 条是默认技：不参与等级解锁、也不进必殺技面板，只允许换技能 id */
     EnableWindow(s_hsLvl, i != 0);
     EnableWindow(s_hsHid, i != 0);
@@ -1908,6 +1913,11 @@ static int hs_apply(void)
     hid = atoi(b);
     if (sh_human_set_skill_hidden(&s_hum, s_hsCls, s_hsSel, hid) != 0) {
         msg("隐藏标志超范围", "隐藏技标志只能填 0（普通技）或 1（隐藏技）。", MB_ICONWARNING);
+        return 0;
+    }
+    GetWindowTextA(s_hsCost, b, sizeof(b));
+    if (sh_human_set_skill_cost(&s_hum, s_hsCls, s_hsSel, atoi(b)) != 0) {
+        msg("气力消耗超范围", "气力消耗必须在 0..999 之间。", MB_ICONWARNING);
         return 0;
     }
     return 1;
@@ -2122,6 +2132,13 @@ static LRESULT CALLBACK HumanSkillProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
             WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
             382, 144, 90, 22, hwnd, (HMENU)(INT_PTR)ID_HS_HIDDEN, NULL, NULL);
 
+        c = CreateWindowExA(0, "STATIC", ansi("气力消耗"),
+            WS_CHILD | WS_VISIBLE, 382, 172, 120, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        s_hsCost = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+            382, 194, 90, 22, hwnd, (HMENU)(INT_PTR)ID_HS_COST, NULL, NULL);
+
         c = CreateWindowExA(0, "STATIC",
             ansi("技能一栏只读；换招式请点[整条导入]，它会把源技能的整条 58 字节覆盖过来。\n"
                  "学习等级：角色达到该等级后，此必殺技在面板解锁。\n"
@@ -2132,6 +2149,7 @@ static LRESULT CALLBACK HumanSkillProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
             SendMessageA(s_hsSid, WM_SETFONT, (WPARAM)g.hFont, TRUE);
             SendMessageA(s_hsLvl, WM_SETFONT, (WPARAM)g.hFont, TRUE);
             SendMessageA(s_hsHid, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(s_hsCost, WM_SETFONT, (WPARAM)g.hFont, TRUE);
             SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
         }
 
@@ -2171,14 +2189,17 @@ static LRESULT CALLBACK HumanSkillProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
             static const char *tl =
                 "学习等级 1-30：角色等级达到后，该必殺技在面板上解锁。\n"
                 "第 1 条默认技不参与解锁，此项已禁用。";
+            static const char *tc =
+                "气力消耗：施放一次扣多少气力（u16，原版 0..350）。";
             static const char *th =
-                "隐藏技 0/1：0 = 普通技，1 = 隐藏技。原版每职业恰好 3 条隐藏技。\n"
+                "隐藏技 0/1：0 = 普通技，1 = 隐藏技。原版每职业 0 或 3 条。\n"
                 "第 1 条默认技不进必殺技面板，此项已禁用。";
-            sh_tip_item map[3];
+            sh_tip_item map[4];
             map[0].h = s_hsSid; map[0].text = ts;
             map[1].h = s_hsLvl; map[1].text = tl;
             map[2].h = s_hsHid; map[2].text = th;
-            tip_poll(map, 3);
+            map[3].h = s_hsCost; map[3].text = tc;
+            tip_poll(map, 4);
         }
         return 0;
 

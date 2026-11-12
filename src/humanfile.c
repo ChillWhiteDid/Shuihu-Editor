@@ -237,6 +237,29 @@ int sh_human_skill_hidden(const sh_human *h, int id, int i)
     return off < 0 ? -1 : (int)h->data[off + 0x05];
 }
 
+/* +0x02：技能类别（0..11）。FUN_00406150 按它 switch 选不同提示串 */
+int sh_human_skill_cat(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)h->data[off + 0x02];
+}
+
+/* +0x12：气力消耗（u16）。FUN_00406150 施放时从 unit+0x44 扣除 */
+int sh_human_skill_cost(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)rd16(h->data + off + 0x12);
+}
+
+int sh_human_set_skill_cost(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < 0 || v > 999) return -2;
+    wr16(h->data + off + 0x12, (uint16_t)v);
+    return 0;
+}
+
 int sh_human_skill_hidden_count(const sh_human *h, int id)
 {
     int i, n, c = 0;
@@ -456,7 +479,8 @@ int sh_human_write(sh_human *h)
             for (k = 0; k < n; k++) {
                 if (sh_human_skill_sid(&chk, i, k) != sh_human_skill_sid(h, i, k) ||
                     sh_human_skill_level(&chk, i, k) != sh_human_skill_level(h, i, k) ||
-                    sh_human_skill_hidden(&chk, i, k) != sh_human_skill_hidden(h, i, k)) {
+                    sh_human_skill_hidden(&chk, i, k) != sh_human_skill_hidden(h, i, k) ||
+                    sh_human_skill_cost(&chk, i, k) != sh_human_skill_cost(h, i, k)) {
                     sh_human_free(&chk);
                     return -2;
                 }
