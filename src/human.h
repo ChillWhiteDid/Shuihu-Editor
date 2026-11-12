@@ -36,4 +36,9 @@ int sh_class_hidden_index(int cls, int k);
 const unsigned char *sh_human_orig(void);
 int sh_human_orig_size(void);
 
+/* 子项 +0x06（SE 编号）在原版数据里的使用情况：用它的技能条数、首个技能的 sid */
+int sh_se_used_count(int se);
+int sh_se_first_sid(int se);
+int sh_se_first_class(int se);
+
 #endif /* SH_HUMAN_H */

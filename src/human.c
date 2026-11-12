@@ -11,6 +11,28 @@ extern const unsigned char  SH_SK_HIDDEN[];
 extern const unsigned char  SH_CLASS_MOVE[];
 extern const unsigned char  SH_HUMAN_ORIG[];
 extern const int            SH_HUMAN_ORIG_SIZE;
+extern const unsigned char  SH_SE_COUNT[100];
+extern const unsigned short SH_SE_FIRST[100];
+extern const unsigned char  SH_SE_CLASS[100];
+
+/* SE 编号（子项 +0x06）的原始使用统计：多少条技能用它、首个技能的字符串 id */
+int sh_se_used_count(int se)
+{
+    if (se < 0 || se > 99) return 0;
+    return (int)SH_SE_COUNT[se];
+}
+
+int sh_se_first_sid(int se)
+{
+    if (se < 0 || se > 99) return -1;
+    return (int)SH_SE_FIRST[se];
+}
+
+int sh_se_first_class(int se)
+{
+    if (se < 0 || se > 99) return -1;
+    return (int)SH_SE_CLASS[se];
+}
 
 /* 构建期嵌入的原始 HUMAN.HUM（gen_data.py 从游戏数据生成；stub 构建时 size=0） */
 const unsigned char *sh_human_orig(void)

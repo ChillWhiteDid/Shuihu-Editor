@@ -260,6 +260,63 @@ int sh_human_set_skill_cost(sh_human *h, int id, int i, int v)
     return 0;
 }
 
+int sh_human_set_skill_cat(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < 0 || v > 11) return -2;
+    h->data[off + 0x02] = (uint8_t)v;
+    return 0;
+}
+
+/* +0x10：范围攻击宽度（格）。FUN_00403930 / FUN_004039E0 抄进动作对象 +0x41 */
+int sh_human_skill_range(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)h->data[off + 0x10];
+}
+
+int sh_human_set_skill_range(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < 0 || v > 99) return -2;
+    h->data[off + 0x10] = (uint8_t)v;
+    return 0;
+}
+
+/* +0x06：范围半径。0 = 单体攻击；非 0 = 范围攻击（值越大范围搜索半径越大）。 */
+int sh_human_skill_aoe(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)rd16(h->data + off + 0x06);
+}
+
+int sh_human_set_skill_aoe(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < 0 || v > 999) return -2;
+    wr16(h->data + off + 0x06, (uint16_t)v);
+    return 0;
+}
+
+/* +0x0D：单体技射程（格）。隔山打虎 = 2（上下左右各两格）。 */
+int sh_human_skill_reach(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)h->data[off + 0x0D];
+}
+
+int sh_human_set_skill_reach(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < 0 || v > 99) return -2;
+    h->data[off + 0x0D] = (uint8_t)v;
+    return 0;
+}
+
 int sh_human_skill_hidden_count(const sh_human *h, int id)
 {
     int i, n, c = 0;
@@ -480,7 +537,11 @@ int sh_human_write(sh_human *h)
                 if (sh_human_skill_sid(&chk, i, k) != sh_human_skill_sid(h, i, k) ||
                     sh_human_skill_level(&chk, i, k) != sh_human_skill_level(h, i, k) ||
                     sh_human_skill_hidden(&chk, i, k) != sh_human_skill_hidden(h, i, k) ||
-                    sh_human_skill_cost(&chk, i, k) != sh_human_skill_cost(h, i, k)) {
+                    sh_human_skill_cost(&chk, i, k) != sh_human_skill_cost(h, i, k) ||
+                    sh_human_skill_range(&chk, i, k) != sh_human_skill_range(h, i, k) ||
+                    sh_human_skill_aoe(&chk, i, k) != sh_human_skill_aoe(h, i, k) ||
+                    sh_human_skill_reach(&chk, i, k) != sh_human_skill_reach(h, i, k) ||
+                    sh_human_skill_cat(&chk, i, k) != sh_human_skill_cat(h, i, k)) {
                     sh_human_free(&chk);
                     return -2;
                 }

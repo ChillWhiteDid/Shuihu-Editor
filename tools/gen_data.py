@@ -263,6 +263,37 @@ def emit_human(human_path, src_dir):
                 fh.write("\n")
         fh.write("\n};\nconst int SH_HUMAN_ORIG_SIZE = %d;\n" % len(data))
     print("human      :", len(recs), "职业 /", len(flat), "条技能")
+
+    # SE 编号（子项 +0x06）→ 使用该编号的技能统计，供 UI 提示「这个编号原本是谁的招式」
+    se_count = [0] * 100
+    se_first = [0] * 100
+    se_class = [0] * 100
+    off3 = HUMAN_HDR
+    for ci, subs in enumerate(recs):
+        base3 = off3 + HUMAN_BASE
+        for k in range(len(subs)):
+            s = base3 + k * HUMAN_SUB
+            se = data[s + 6] | (data[s + 7] << 8)
+            if 0 < se < 100:
+                se_count[se] += 1
+                if se_first[se] == 0:
+                    se_first[se] = int.from_bytes(data[s:s + 2], "little")
+                    se_class[se] = ci
+        off3 = base3 + len(subs) * HUMAN_SUB
+    with open(out2, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n/* SE 编号（子项 +0x06）使用统计：该编号被多少条技能使用、首个技能 sid / 职业 */\n")
+        fh.write("const unsigned char SH_SE_COUNT[100] = {\n")
+        for i, v in enumerate(se_count):
+            fh.write("%d,%s" % (v, "\n" if (i + 1) % 20 == 0 else ""))
+        fh.write("\n};\n\n")
+        fh.write("const unsigned short SH_SE_FIRST[100] = {\n")
+        for i, v in enumerate(se_first):
+            fh.write("%d,%s" % (v, "\n" if (i + 1) % 20 == 0 else ""))
+        fh.write("\n};\n\n")
+        fh.write("const unsigned char SH_SE_CLASS[100] = {\n")
+        for i, v in enumerate(se_class):
+            fh.write("%d,%s" % (v, "\n" if (i + 1) % 20 == 0 else ""))
+        fh.write("\n};\n")
     return out
 
 def resolve_game_exe(explicit):
@@ -326,6 +357,8 @@ def write_stub(src_dir):
         fh.write("const unsigned char SH_CLASS_MOVE[] = { 0 };\n")
         fh.write("const unsigned char SH_HUMAN_ORIG[] = { 0 };\n")
         fh.write("const int SH_HUMAN_ORIG_SIZE = 0;\n")
+        fh.write("const unsigned char SH_SE_COUNT[100] = { 0 };\n")
+        fh.write("const unsigned short SH_SE_FIRST[100] = { 0 };\n")
 
     print("已生成空表（stub）到", src_dir)
     print("  注意: 道具表/技能表为空，程序可用但看不到名字。")
