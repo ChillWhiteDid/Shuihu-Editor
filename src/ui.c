@@ -111,7 +111,7 @@
 #define ID_IM_OK       21501  /* 导入窗口：确认 */
 #define ID_IM_CANCEL   21502  /* 导入窗口：取消 */
 
-#define APP_VERSION  "v2.2"
+#define APP_VERSION  "v2.2.2"
 #define APP_BUILD    "2026-11-12"
 
 /* 界面上要显示的字段（不含类型 id） */
