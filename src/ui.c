@@ -16,6 +16,7 @@
 
 #include "save.h"
 #include "goodsfile.h"
+#include "humanfile.h"
 #include "names.h"
 #include "goods.h"
 #include "human.h"
@@ -30,7 +31,7 @@
  *   10000 – 14999   存档修改页（page 0）
  *   15000 – 19999   道具编辑页（page 1）
  *   20000 – 20499   两页共用（状态栏、页签）
- *   21000 – 22999   子窗口（技能树 / 恢复存档 / 装备加成）
+ *   21000 – 22999   子窗口（技能树 / 恢复存档 / 装备加成 / 人物编辑）
  *
  * is_goods_id() 只依赖 15000 这个边界；调整分块时务必同步它。
  * 历史上因为 ID 撞车出过三次问题（按钮跑到别的页、文字写进别的控件），
@@ -66,11 +67,13 @@
 #define ID_GB_RNG0     15050  /* +0 .. +SH_GF_COUNT-1  范围提示 */
 #define ID_GB_DESC     15060  /* 说明文本 */
 #define ID_GB_CHK      15061  /* 一致性提示 */
+#define ID_GB_NOTE     15062  /* 「说明：」标签（必须归道具页，否则会画到存档页） */
 
 /* ---- 两页共用：20000 – 20499 ---- */
 #define ID_STATUS      20000  /* 状态栏（两页都显示）*/
 #define ID_TAB_SAVE    20010  /* 页签：存档修改 */
 #define ID_TAB_GOODS   20011  /* 页签：道具编辑 */
+#define ID_HUMAN       20020  /* 人物编辑：两页常显，不随页签隐藏 */
 
 /* ---- 子窗口：21000 – 22999 ---- */
 #define ID_TREE_EDIT   21000  /* 技能树窗口：文本框 */
@@ -82,9 +85,18 @@
 #define ID_CA_OK       21210  /* 装备加成窗口：写入 */
 #define ID_CA_CANCEL   21211  /* 装备加成窗口：取消 */
 #define ID_CA_REFILL   21212  /* 装备加成窗口：按 GOODS 重填 */
+#define ID_HU_LIST     21300  /* 人物编辑窗口：职业列表 */
+#define ID_HU_BASE0    21310  /* +0 .. +6   基础值输入框 */
+#define ID_HU_GROW0    21320  /* +0 .. +6   成长率输入框 */
+#define ID_HU_MOVE     21330  /* 移动输入框 */
+#define ID_HU_INFO     21331  /* 只读信息（技能条数 / 装备类型 / 未定字段） */
+#define ID_HU_SAVE     21340  /* 写入文件 */
+#define ID_HU_RESTORE  21343  /* 从备份恢复 HUMAN.HUM */
+#define ID_HU_RELOAD   21341  /* 从磁盘重读 */
+#define ID_HU_CLOSE    21342  /* 关闭 */
 
-#define APP_VERSION  "v2.0"
-#define APP_BUILD    "2026-11-10"
+#define APP_VERSION  "v2.1"
+#define APP_BUILD    "2026-11-12"
 
 /* 界面上要显示的字段（不含类型 id） */
 static const sh_field kFields[] = {
@@ -139,6 +151,7 @@ static void do_about(void);
 static void set_page(int which);
 static int  is_goods_id(int id);
 static void do_goods(void);
+static void do_human(void);
 static void gb_fill_list(void);
 static void gb_show_item(int id);
 static int  gb_apply(void);
@@ -788,6 +801,7 @@ static FILETIME s_bakTime[SH_MAX_BAK];             /* 修改时间（排序用�
 static int      s_bakCount;
 static int      s_bakChoice;                        /* -1 = 取消 */
 static HWND     s_bakWnd;
+static HWND     s_pickParent;                       /* 拥有选择窗口的父窗口；NULL = 主窗口 */
 static const char *s_pickTitle = "恢复存档";
 
 static void ft_to_text(const FILETIME *ft, char *out)
@@ -881,6 +895,20 @@ static int collect_goods_backups(const char *goodsPath)
     return collect_backups_in(dir, pat, dir);
 }
 
+/* 职业表备份：<HUMAN 目录>\HUMAN.HUM_*.bak */
+static int collect_human_backups(const char *humanPath)
+{
+    char dir[MAX_PATH], pat[MAX_PATH];
+    char *p;
+
+    strncpy(dir, humanPath, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = (char)0;
+    p = strrchr(dir, '\\');
+    if (p) *p = (char)0; else strcpy(dir, ".");
+    sprintf(pat, "%s\\HUMAN.HUM_*.bak", dir);
+    return collect_backups_in(dir, pat, dir);
+}
+
 static LRESULT CALLBACK BakProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
 {
     switch (m) {
@@ -935,8 +963,10 @@ static int pick_backup(void)
 {
     WNDCLASSA wc;
     MSG msgLoop;
-    HWND lb;
+    HWND lb, owner;
     int i;
+
+    owner = s_pickParent ? s_pickParent : g.hMain;
 
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc = BakProc;
@@ -950,7 +980,7 @@ static int pick_backup(void)
     s_bakWnd = CreateWindowExA(0, "ShuiHuBak", ansi(s_pickTitle),
         WS_POPUP | WS_CAPTION | WS_SYSMENU,
         CW_USEDEFAULT, CW_USEDEFAULT, 600, 430,
-        g.hMain, NULL, wc.hInstance, NULL);
+        owner, NULL, wc.hInstance, NULL);
     if (!s_bakWnd) return -1;
 
     lb = GetDlgItem(s_bakWnd, ID_BAK_LIST);
@@ -960,7 +990,7 @@ static int pick_backup(void)
         SendMessageA(lb, LB_SETCURSEL, 0, 0);      /* 默认最新 */
     }
 
-    EnableWindow(g.hMain, FALSE);
+    EnableWindow(owner, FALSE);
     ShowWindow(s_bakWnd, SW_SHOW);
     UpdateWindow(s_bakWnd);
 
@@ -970,13 +1000,13 @@ static int pick_backup(void)
             DispatchMessageA(&msgLoop);
         }
     }
-    EnableWindow(g.hMain, TRUE);
-    SetActiveWindow(g.hMain);
+    EnableWindow(owner, TRUE);
+    SetActiveWindow(owner);
     tip_hide();                     /* 关掉残留的提示框 */
-    /* 模态窗口覆盖过主窗口，关掉后必须重绘。
-     * 注意：InvalidateRect 只会重画父窗口本身，子控件（按钮等）不会跟着重画，
+    /* 模态窗口覆盖过父窗口，关掉后必须重绘。
+     * 注意：InvalidateRect 只会重画窗口本身，子控件（按钮等）不会跟着重画，
      * 所以必须用 RDW_ALLCHILDREN。 */
-    RedrawWindow(g.hMain, NULL, NULL,
+    RedrawWindow(owner, NULL, NULL,
                  RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     return s_bakChoice;
 }
@@ -1178,6 +1208,12 @@ static int is_goods_id(int id)
     return (id >= 15000 && id < 20000);
 }
 
+/* 两页常显的控件：不参与页签切换 */
+static int is_shared_id(int id)
+{
+    return id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS || id == ID_HUMAN;
+}
+
 static void set_page(int which)
 {
     HWND c;
@@ -1185,7 +1221,7 @@ static void set_page(int which)
     g.page = which;
     for (c = GetWindow(g.hMain, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
         int id = GetDlgCtrlID(c);
-        if (id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS) continue;
+        if (is_shared_id(id)) continue;
         /* 注意：存档页的静态标签 ID 是 0，不能跳过 —— 否则两页会叠在一起 */
         /* 注意 ID_MONEY 是 1050，不能把 1034..1051 整段当成道具页 */
         ShowWindow(c, (is_goods_id(id) == which) ? SW_SHOW : SW_HIDE);
@@ -1499,6 +1535,460 @@ static void do_cache_edit(void)
     /* 模态窗口覆盖过主窗口，关掉后必须重绘。
      * 注意：InvalidateRect 只会重画父窗口本身，子控件（按钮等）不会跟着重画，
      * 所以必须用 RDW_ALLCHILDREN。 */
+    RedrawWindow(g.hMain, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
+/* ---------------- 人物编辑（HUMAN.HUM 职业表） ----------------
+ * 72 条职业记录，改的是**游戏本体数据**，所有存档一起受影响。
+ * 字段映射与公式见分析报告 §4.20.1（REA 反编译 FUN_00408540 确认）：
+ *   面板值 = ftol(基础值 × (成长率/100)^等级) + 装备/槽加成
+ *   攻击/防御/命中/敏捷/必殺 夹 255，最大体力/气力夹 510。
+ * 所以这里改的是"基础值与成长率"，不是某个存档里的角色。 */
+static sh_human s_hum;
+static int      s_humLoaded;
+static int      s_humSel = -1;
+static HWND     s_humWnd;
+static HWND     s_humList;
+static HWND     s_humBase[SH_HF_COUNT];
+static HWND     s_humGrow[SH_HF_COUNT];
+static HWND     s_humMoveCtl;
+static HWND     s_humInfo;
+
+/* 找 HUMAN.HUM：优先按存档目录推断，其次用已载入的 GOODS.DAB 同目录 */
+static int human_path(char *out, size_t n)
+{
+    char dir[SH_HUMAN_PATH];
+    char *p;
+
+    if (g.path[0] && sh_human_locate(g.path, out, n)) return 1;
+
+    if (s_gb.path[0]) {
+        strncpy(dir, s_gb.path, sizeof(dir) - 1);
+        dir[sizeof(dir) - 1] = '\0';
+        p = strrchr(dir, '\\');
+        if (p) *p = '\0';
+        sprintf(out, "%s\\HUMAN.HUM", dir);
+        {
+            FILE *f = fopen(out, "rb");
+            if (f) { fclose(f); return 1; }
+        }
+    }
+    return 0;
+}
+
+static int human_ensure(void)
+{
+    char path[SH_HUMAN_PATH];
+    int rc;
+
+    if (s_humLoaded) return 1;
+
+    if (!human_path(path, sizeof(path))) {
+        msg("找不到 HUMAN.HUM",
+            "按存档目录没能定位到 Data\\HUMAN.HUM。\n\n"
+            "先打开一次存档（工具按「存档目录\\..\\Data\\」推断游戏数据位置），"
+            "或把本工具放到游戏目录下再用。",
+            MB_ICONWARNING);
+        return 0;
+    }
+
+    rc = sh_human_load(path, &s_hum);
+    if (rc != 0) {
+        char t[600];
+        sprintf(t, "读取失败（错误码 %d）：\n%s\n\n"
+                   "-1 打不开　-2 文件太小　-3 内存不足　-4 头不对　-5 结构对不上",
+                rc, path);
+        msg("HUMAN.HUM 读取失败", t, MB_ICONERROR);
+        return 0;
+    }
+    s_humLoaded = 1;
+    s_humSel = -1;
+    return 1;
+}
+
+/* 职业 id → 角色名（名表只覆盖可玩角色；查不到返回空串） */
+static const char *hu_class_name(int cls)
+{
+    const char *n = sh_char_name(cls);
+    if (!n) return "";
+    if (n[0] == '?' && n[1] == 0) return "";
+    return n;
+}
+
+/* 本存档里用了该职业的角色（等级）；用于和存档交叉对比 */
+static void hu_save_usage(int cls, char *out, size_t n)
+{
+    int i, k = 0, cnt = 0;
+
+    if (!out || n < 8) return;
+    out[0] = '\0';
+
+    if (!g.loaded) { strncpy(out, "未打开存档", n - 1); out[n - 1] = '\0'; return; }
+
+    for (i = 0; i < g.mapCount; i++) {
+        int idx = g.map[i];
+        if ((int)g.s.units[idx].id != cls) continue;
+        cnt++;
+        if (k < (int)n - 12)
+            k += sprintf(out + k, "%sLv%d", cnt > 1 ? "、" : "",
+                         (int)g.s.units[idx].f[SH_F_LEVEL]);
+    }
+    if (cnt == 0) { strncpy(out, "本存档没有", n - 1); out[n - 1] = '\0'; }
+}
+
+static void hu_fill_list(void)
+{
+    int i;
+    SendMessageA(s_humList, LB_RESETCONTENT, 0, 0);
+    for (i = 0; i < s_hum.count; i++) {
+        char row[220];
+        const char *nm = hu_class_name(i);
+        sprintf(row, "%02d %s 攻%d 防%d 移%d",
+                i, nm[0] ? nm : "—",
+                sh_human_base(&s_hum, i, SH_HF_ATK),
+                sh_human_base(&s_hum, i, SH_HF_DEF),
+                sh_human_move(&s_hum, i));
+        SendMessageA(s_humList, LB_ADDSTRING, 0, (LPARAM)ansi(row));
+    }
+}
+
+static void hu_show(int cls)
+{
+    int f;
+    char b[32];
+
+    if (cls < 0 || cls >= s_hum.count) return;
+
+    for (f = 0; f < SH_HF_COUNT; f++) {
+        sprintf(b, "%d", sh_human_base(&s_hum, cls, (sh_human_field)f));
+        SetWindowTextA(s_humBase[f], b);
+        sprintf(b, "%d", sh_human_growth(&s_hum, cls, (sh_human_field)f));
+        SetWindowTextA(s_humGrow[f], b);
+    }
+    sprintf(b, "%d", sh_human_move(&s_hum, cls));
+    SetWindowTextA(s_humMoveCtl, b);
+
+    {
+        char info[400], use[80], head[80];
+        const char *nm = hu_class_name(cls);
+        hu_save_usage(cls, use, sizeof(use));
+        if (nm[0]) sprintf(head, "职业 %s", nm);
+        else       sprintf(head, "职业 %d（无名）", cls);
+        sprintf(info,
+                "%s\n"
+                "技能 %d 条\n"
+                "本存档：%s\n"
+                "可装备类型(+0x19) = %d\n"
+                "+0x1D = %d (未定)  偏移 0x%X",
+                head,
+                sh_human_skill_count(&s_hum, cls),
+                use,
+                sh_human_u16(&s_hum, cls, 0x19),
+                sh_human_u16(&s_hum, cls, 0x1D),
+                (unsigned)s_hum.off[cls]);
+        SetWindowTextA(s_humInfo, ansi(info));
+    }
+    s_humSel = cls;
+}
+
+/* 控件 → 内存；成功 1，越界 0（并弹提示） */
+static int hu_apply(void)
+{
+    int f, cls = s_humSel;
+    char b[32];
+
+    if (cls < 0 || cls >= s_hum.count) return 1;
+
+    for (f = 0; f < SH_HF_COUNT; f++) {
+        GetWindowTextA(s_humBase[f], b, sizeof(b));
+        if (sh_human_set_base(&s_hum, cls, (sh_human_field)f, atoi(b)) != 0) {
+            msg("数值超范围", "基础值必须在 0..65535 之间。", MB_ICONWARNING);
+            return 0;
+        }
+        GetWindowTextA(s_humGrow[f], b, sizeof(b));
+        if (sh_human_set_growth(&s_hum, cls, (sh_human_field)f, atoi(b)) != 0) {
+            msg("数值超范围", "成长率必须在 0..255 之间（100 = 不成长）。", MB_ICONWARNING);
+            return 0;
+        }
+    }
+
+    GetWindowTextA(s_humMoveCtl, b, sizeof(b));
+    if (sh_human_set_move(&s_hum, cls, atoi(b)) != 0) {
+        msg("数值超范围", "移动必须在 0..255 之间。", MB_ICONWARNING);
+        return 0;
+    }
+    return 1;
+}
+
+static void hu_commit(void)
+{
+    char bak[SH_HUMAN_PATH + 64];
+    int rc;
+
+    if (!hu_apply()) return;
+
+    if (sh_human_backup(&s_hum, bak, sizeof(bak)) != 0) {
+        msg("备份失败", "写入前备份失败，已取消写入（没有改动游戏文件）。", MB_ICONERROR);
+        return;
+    }
+
+    rc = sh_human_write(&s_hum);
+    if (rc != 0) {
+        char t[700];
+        sprintf(t, "%s\n\n备份：%s\n\n"
+                   "请用该备份覆盖回去；再次打开时先「从磁盘重读」确认现状。",
+                rc == -2 ? "写入后校验失败：文件内容与内存不一致。"
+                         : "写入失败（磁盘只读？文件被占用？）。",
+                bak);
+        msg("写入失败", t, MB_ICONERROR);
+        return;
+    }
+
+    hu_fill_list();
+    SendMessageA(s_humList, LB_SETCURSEL, s_humSel, 0);
+    hu_show(s_humSel);
+    status("已写入 %s（备份：%s）", s_hum.path, bak);
+    {
+        char t[700];
+        sprintf(t, "已写入 %s\n\n备份：%s\n\n"
+                   "进游戏后需要让角色升级、装卸装备或换关，才会按新值重算面板。",
+                s_hum.path, bak);
+        msg("完成", t, MB_ICONINFORMATION);
+    }
+}
+
+/* 从备份恢复 HUMAN.HUM：列出同目录 HUMAN.HUM_*.bak，默认选最新 */
+static void do_human_restore(HWND owner)
+{
+    char m[900];
+    int pick;
+
+    if (!s_humLoaded) return;
+
+    if (collect_human_backups(s_hum.path) <= 0) {
+        msg("没有备份",
+            "HUMAN.HUM 所在目录里没有找到 .bak 备份。\n\n"
+            "备份是在点「写入文件」时自动生成的，\n"
+            "名字形如 HUMAN.HUM_YYYYMMDD-HHMMSS.bak。",
+            MB_ICONINFORMATION);
+        return;
+    }
+
+    s_pickTitle = "恢复职业表";
+    s_pickParent = owner;
+    pick = pick_backup();
+    s_pickParent = NULL;
+    s_pickTitle = "恢复存档";
+    if (pick < 0 || pick >= s_bakCount) return;
+
+    sprintf(m, "将用下面这份备份覆盖 HUMAN.HUM：\n\n%s\n\n"
+               "（当前未写入的修改会丢失）\n\n确定恢复吗？", s_bakPath[pick]);
+    if (MessageBoxA(owner, ansi(m), ansi("确认恢复"),
+                    MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
+        return;
+
+    if (!CopyFileA(s_bakPath[pick], s_hum.path, FALSE)) {
+        msg("恢复失败", "复制备份文件失败。", MB_ICONERROR);
+        return;
+    }
+
+    {
+        char path[SH_HUMAN_PATH];
+        int rc;
+        strncpy(path, s_hum.path, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+        sh_human_free(&s_hum);
+        s_humLoaded = 0;
+        rc = sh_human_load(path, &s_hum);
+        if (rc != 0) {
+            msg("恢复后读取失败",
+                "已用备份覆盖，但重新读取失败。文件可能已损坏，请换一份备份再试。",
+                MB_ICONERROR);
+            return;
+        }
+    }
+    s_humLoaded = 1;
+    s_humSel = -1;
+    hu_fill_list();
+    SendMessageA(s_humList, LB_SETCURSEL, 0, 0);
+    hu_show(0);
+    status("已从备份恢复职业表：%s", s_bakPath[pick]);
+    msg("完成", "已从备份恢复 HUMAN.HUM。", MB_ICONINFORMATION);
+}
+
+static LRESULT CALLBACK HumanProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_CREATE: {
+        int f;
+        HWND c;
+
+        s_humList = CreateWindowExA(0, "LISTBOX", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
+            10, 8, 256, 400, hwnd, (HMENU)(INT_PTR)ID_HU_LIST, NULL, NULL);
+        if (g.hFont) SendMessageA(s_humList, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
+        c = CreateWindowExA(0, "STATIC", ansi("基础值"),
+            WS_CHILD | WS_VISIBLE, 276, 8, 60, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        c = CreateWindowExA(0, "STATIC", ansi("成长率%"),
+            WS_CHILD | WS_VISIBLE, 414, 8, 70, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
+        for (f = 0; f < SH_HF_COUNT; f++) {
+            HWND la = CreateWindowExA(0, "STATIC",
+                ansi(sh_human_field_label((sh_human_field)f)),
+                WS_CHILD | WS_VISIBLE, 276, 32 + f * 28, 64, 20, hwnd, NULL, NULL, NULL);
+            s_humBase[f] = CreateWindowExA(0, "EDIT", "",
+                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+                344, 29 + f * 28, 62, 22, hwnd,
+                (HMENU)(INT_PTR)(ID_HU_BASE0 + f), NULL, NULL);
+            s_humGrow[f] = CreateWindowExA(0, "EDIT", "",
+                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+                414, 29 + f * 28, 54, 22, hwnd,
+                (HMENU)(INT_PTR)(ID_HU_GROW0 + f), NULL, NULL);
+            if (g.hFont) {
+                SendMessageA(la, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(s_humBase[f], WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(s_humGrow[f], WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            }
+        }
+
+        c = CreateWindowExA(0, "STATIC", ansi("移动"),
+            WS_CHILD | WS_VISIBLE, 276, 32 + SH_HF_COUNT * 28, 64, 20, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        s_humMoveCtl = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+            344, 29 + SH_HF_COUNT * 28, 62, 22, hwnd,
+            (HMENU)(INT_PTR)ID_HU_MOVE, NULL, NULL);
+
+        s_humInfo = CreateWindowExA(0, "STATIC", "",
+            WS_CHILD | WS_VISIBLE | SS_LEFT, 484, 30, 220, 100, hwnd,
+            (HMENU)(INT_PTR)ID_HU_INFO, NULL, NULL);
+        if (g.hFont) {
+            SendMessageA(s_humMoveCtl, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(s_humInfo, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        }
+
+        c = CreateWindowExA(0, "STATIC",
+            ansi("改的是游戏本体数据（Data\\HUMAN.HUM），72 个职业一起生效，不是某个存档。\n"
+                 "写入前自动备份，写后重读校验。面板 = 基础 × 成长率^等级（夹 255 / 510）。"),
+            WS_CHILD | WS_VISIBLE | SS_LEFT, 10, 412, 690, 36, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
+        {
+            HWND b1 = CreateWindowExA(0, "BUTTON", ansi("写入文件"),
+                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+                276, 458, 96, 28, hwnd, (HMENU)(INT_PTR)ID_HU_SAVE, NULL, NULL);
+            HWND b4 = CreateWindowExA(0, "BUTTON", ansi("恢复备份"),
+                WS_CHILD | WS_VISIBLE, 380, 458, 96, 28, hwnd,
+                (HMENU)(INT_PTR)ID_HU_RESTORE, NULL, NULL);
+            HWND b2 = CreateWindowExA(0, "BUTTON", ansi("从磁盘重读"),
+                WS_CHILD | WS_VISIBLE, 484, 458, 100, 28, hwnd,
+                (HMENU)(INT_PTR)ID_HU_RELOAD, NULL, NULL);
+            HWND b3 = CreateWindowExA(0, "BUTTON", ansi("关闭"),
+                WS_CHILD | WS_VISIBLE, 592, 458, 72, 28, hwnd,
+                (HMENU)(INT_PTR)ID_HU_CLOSE, NULL, NULL);
+            if (g.hFont) {
+                SendMessageA(b1, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(b4, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(b2, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(b3, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            }
+        }
+        return 0;
+    }
+
+    case WM_COMMAND:
+        if (LOWORD(wp) == ID_HU_LIST && HIWORD(wp) == LBN_SELCHANGE) {
+            int sel = (int)SendMessageA(s_humList, LB_GETCURSEL, 0, 0);
+            if (sel >= 0 && sel != s_humSel) {
+                if (!hu_apply()) {
+                    SendMessageA(s_humList, LB_SETCURSEL, s_humSel, 0);
+                    return 0;
+                }
+                hu_show(sel);
+            }
+            return 0;
+        }
+        if (LOWORD(wp) == ID_HU_RESTORE) { do_human_restore(hwnd); return 0; }
+        if (LOWORD(wp) == ID_HU_SAVE) { hu_commit(); return 0; }
+        if (LOWORD(wp) == ID_HU_RELOAD) {
+            char path[SH_HUMAN_PATH];
+            int rc;
+            strncpy(path, s_hum.path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+            sh_human_free(&s_hum);
+            s_humLoaded = 0;
+            rc = sh_human_load(path, &s_hum);
+            if (rc != 0) {
+                msg("重读失败", "文件读取失败，请检查文件是否还在。", MB_ICONERROR);
+                s_humLoaded = 0;
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            s_humLoaded = 1;
+            s_humSel = -1;
+            hu_fill_list();
+            SendMessageA(s_humList, LB_SETCURSEL, 0, 0);
+            hu_show(0);
+            return 0;
+        }
+        if (LOWORD(wp) == ID_HU_CLOSE) { DestroyWindow(hwnd); return 0; }
+        return 0;
+
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+
+    case WM_DESTROY:
+        s_humWnd = NULL;
+        return 0;
+    }
+    return DefWindowProcA(hwnd, m, wp, lp);
+}
+
+static void do_human(void)
+{
+    WNDCLASSA wc;
+    MSG msgLoop;
+
+    if (!human_ensure()) return;
+
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = HumanProc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = "ShuiHuHuman";
+    RegisterClassA(&wc);
+
+    s_humWnd = CreateWindowExA(0, "ShuiHuHuman",
+        ansi("人物编辑 — HUMAN.HUM（职业基础值 / 成长率）"),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        CW_USEDEFAULT, CW_USEDEFAULT, 720, 528,
+        g.hMain, NULL, wc.hInstance, NULL);
+    if (!s_humWnd) return;
+
+    hu_fill_list();
+    if (s_hum.count > 0) {
+        SendMessageA(s_humList, LB_SETCURSEL, 0, 0);
+        hu_show(0);
+    }
+
+    EnableWindow(g.hMain, FALSE);
+    ShowWindow(s_humWnd, SW_SHOW);
+    UpdateWindow(s_humWnd);
+    while (s_humWnd && GetMessageA(&msgLoop, NULL, 0, 0) > 0) {
+        if (!IsDialogMessageA(s_humWnd, &msgLoop)) {
+            TranslateMessage(&msgLoop);
+            DispatchMessageA(&msgLoop);
+        }
+    }
+    EnableWindow(g.hMain, TRUE);
+    SetActiveWindow(g.hMain);
+    tip_hide();
     RedrawWindow(g.hMain, NULL, NULL,
                  RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
@@ -1817,7 +2307,8 @@ static void create_children(HWND hwnd)
        SS_LEFT, 282, 264, 480, 44, ID_GB_WARN);
     mk("BUTTON", "写入道具表", BS_PUSHBUTTON, 282, 316, 120, 30, ID_GB_SAVE);
     mk("BUTTON", "恢复道具表", BS_PUSHBUTTON, 410, 316, 120, 30, ID_GB_RESTORE);
-    mk("STATIC", "说明：", SS_LEFT, 282, 356, 60, 20, 0);
+    mk("BUTTON", "人物编辑", BS_PUSHBUTTON, 12, 422, 118, 30, ID_HUMAN);
+    mk("STATIC", "说明：", SS_LEFT, 282, 356, 60, 20, ID_GB_NOTE);
     mk("STATIC", "", SS_LEFT, 342, 356, 430, 56, ID_GB_DESC);
     mk("STATIC", "", SS_LEFT, 282, 420, 540, 20, ID_GB_CHK);
 
@@ -1998,7 +2489,7 @@ static void do_uitest(HWND hwnd)
             int vis = (GetWindowLongA(c, GWL_STYLE) & WS_VISIBLE) != 0;
             int isGoods;
             if (!vis) continue;
-            if (id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS) continue;
+            if (is_shared_id(id)) continue;
             isGoods = is_goods_id(id);
             if (!isGoods) badGoods++;      /* 道具页上出现了存档控件 */
         }
@@ -2009,7 +2500,7 @@ static void do_uitest(HWND hwnd)
             int vis = (GetWindowLongA(c, GWL_STYLE) & WS_VISIBLE) != 0;
             int isGoods;
             if (!vis) continue;
-            if (id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS) continue;
+            if (is_shared_id(id)) continue;
             isGoods = is_goods_id(id);
             if (isGoods) badSave++;        /* 存档页上出现了道具控件 */
         }
@@ -2099,6 +2590,53 @@ static void do_uitest(HWND hwnd)
         }
         fprintf(f, "case19 控件ID唯一性: 检查 %d 个句柄 重复/缺失 %d -> %s\r\n",
                 n, dup, dup == 0 ? "PASS" : "FAIL");
+    }
+
+    /* case22：人物编辑 —— 按钮归属 + HUMAN.HUM 解析 + 字段读写（只改内存，不落盘） */
+    {
+        HWND hb = GetDlgItem(g.hMain, ID_HUMAN);
+        HWND hn = GetDlgItem(g.hMain, ID_GB_NOTE);
+        char hp[SH_HUMAN_PATH];
+        sh_human hu;
+        int page0 = g.page, vis0, vis1, okId;
+        int rc = -99, okParse = 0, okRW = 0;
+
+        /* 人物编辑按钮必须两页都能看见（用户要求：启动就显示） */
+        set_page(0); vis0 = IsWindowVisible(hb);
+        set_page(1); vis1 = IsWindowVisible(hb);
+        set_page(page0);
+
+        okId = (hb != NULL) && vis0 && vis1 &&
+               (hn != NULL) && is_goods_id(ID_GB_NOTE);
+
+        hp[0] = '\0';
+        if (sh_human_locate(g.path, hp, sizeof(hp))) rc = sh_human_load(hp, &hu);
+        if (rc == 0) {
+            int i, sum = 0;
+            for (i = 0; i < hu.count; i++) sum += sh_human_skill_count(&hu, i);
+            okParse = (hu.count == SH_HUMAN_MAX) && (sum == 302) &&
+                      (hu.size == SH_HUMAN_SIZE) &&
+                      (sh_human_base(&hu, 0, SH_HF_ATK) > 0) &&
+                      (sh_human_base(&hu, 0, SH_HF_ATK) <= 2000) &&
+                      (sh_human_growth(&hu, 0, SH_HF_DEF) >= 1) &&
+                      (sh_human_growth(&hu, 0, SH_HF_DEF) <= 255) &&
+                      (sh_human_move(&hu, 0) >= 1) &&
+                      (sh_human_move(&hu, 0) <= 20);
+            {
+                int a = sh_human_base(&hu, 0, SH_HF_ATK);
+                okRW = (sh_human_set_base(&hu, 0, SH_HF_ATK, a + 1) == 0) &&
+                       (sh_human_base(&hu, 0, SH_HF_ATK) == a + 1) &&
+                       (sh_human_set_base(&hu, 0, SH_HF_ATK, a) == 0) &&
+                       (sh_human_base(&hu, 0, SH_HF_ATK) == a) &&
+                       (sh_human_set_growth(&hu, 0, SH_HF_ATK, 300) == -2) &&
+                       (sh_human_set_move(&hu, 0, 300) == -2) &&
+                       (sh_human_base(&hu, 0, SH_HF_ATK) == a);
+            }
+            sh_human_free(&hu);
+        }
+        fprintf(f, "case22 人物编辑: 按钮=%d 解析rc=%d 结构=%d 读写=%d -> %s\r\n",
+                okId, rc, okParse, okRW,
+                (okId && okParse && okRW) ? "PASS" : "FAIL");
     }
 
     /* case18：道具的 敏捷(+96) / 必殺(+100) 字段读写 */
@@ -2499,6 +3037,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
             if (gb_apply()) gb_commit();
             return 0;
         case ID_GB_RESTORE: do_goods_restore(); return 0;
+        case ID_HUMAN:      do_human();      return 0;
         case ID_GB_LIST:
             if (HIWORD(wp) == LBN_SELCHANGE) {
                 int row = (int)SendMessageA(g.hGbList, LB_GETCURSEL, 0, 0);

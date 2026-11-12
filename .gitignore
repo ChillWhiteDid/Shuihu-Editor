@@ -6,6 +6,7 @@ release/
 *.exe
 *.tmp
 layout.txt
+uitest.txt
 # 运行时设置（记住上次目录），不入库
 shuihu-edit.ini
 
