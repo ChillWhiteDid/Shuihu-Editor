@@ -41,6 +41,7 @@ static void wr16(uint8_t *p, uint16_t v)
 }
 
 /* ---------------------------------------------------------------- 加载 */
+static int human_parse(sh_human *h);
 
 int sh_human_load(const char *path, sh_human *h)
 {
@@ -48,8 +49,6 @@ int sh_human_load(const char *path, sh_human *h)
     long sz;
     size_t got;
     char safe[SH_HUMAN_PATH];
-    uint32_t off;
-    int i;
 
     if (!path || !h) return -1;
 
@@ -75,7 +74,19 @@ int sh_human_load(const char *path, sh_human *h)
     if (got != (size_t)sz) { free(h->data); h->data = NULL; return -1; }
     h->size = (size_t)sz;
 
-    /* 头校验 */
+    if (human_parse(h) != 0) return -4;
+
+    strncpy(h->path, safe, SH_HUMAN_PATH - 1);
+    h->path[SH_HUMAN_PATH - 1] = '\0';
+    return 0;
+}
+
+/* 解析已就位的数据（调用方负责 h->data / h->size） */
+static int human_parse(sh_human *h)
+{
+    uint32_t off;
+    int i, count;
+
     if (h->data[0] != 'H' || h->data[1] != 'U' || h->data[2] != 'M' ||
         rd16(h->data + 5) != SH_HUMAN_MAX ||
         rd16(h->data + 7) != SH_HUMAN_REC ||
@@ -84,10 +95,9 @@ int sh_human_load(const char *path, sh_human *h)
         return -4;
     }
 
-    /* 逐条走，确认正好用尽文件 */
-    h->count = (int)rd16(h->data + 5);
+    count = (int)rd16(h->data + 5);
     off = SH_HUMAN_HEAD;
-    for (i = 0; i < h->count; i++) {
+    for (i = 0; i < count; i++) {
         int n;
         if ((size_t)off + SH_HUMAN_REC > h->size) { sh_human_free(h); return -5; }
         h->off[i] = off;
@@ -95,9 +105,20 @@ int sh_human_load(const char *path, sh_human *h)
         off += SH_HUMAN_REC + (uint32_t)n * SH_HUMAN_SUB;
     }
     if ((size_t)off != h->size) { sh_human_free(h); return -5; }
+    h->count = count;
+    return 0;
+}
 
-    strncpy(h->path, safe, SH_HUMAN_PATH - 1);
-    h->path[SH_HUMAN_PATH - 1] = '\0';
+int sh_human_load_mem(const uint8_t *buf, size_t size, sh_human *h)
+{
+    if (!buf || !h || size < SH_HUMAN_HEAD + SH_HUMAN_REC) return -2;
+    memset(h, 0, sizeof(*h));
+    h->data = (uint8_t *)malloc(size);
+    if (!h->data) return -3;
+    memcpy(h->data, buf, size);
+    h->size = size;
+    if (human_parse(h) != 0) return -4;
+    h->path[0] = '\0';
     return 0;
 }
 
@@ -180,6 +201,91 @@ int sh_human_move(const sh_human *h, int id)
 int sh_human_skill_count(const sh_human *h, int id)
 {
     return sh_human_u16(h, id, 0x2D);
+}
+
+int sh_human_skill_level_max(void) { return 30; }
+
+int sh_human_skill_off(const sh_human *h, int id, int i)
+{
+    int n;
+    size_t off;
+
+    if (!valid_id(h, id) || i < 0) return -1;
+    n = (int)rd16(h->data + h->off[id] + 0x2D);
+    if (i >= n || i >= SH_HUMAN_SKILL_MAX) return -1;
+
+    off = (size_t)h->off[id] + SH_HUMAN_REC + (size_t)i * SH_HUMAN_SUB;
+    if (off + SH_HUMAN_SUB > h->size) return -1;
+    return (int)off;
+}
+
+int sh_human_skill_sid(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)rd16(h->data + off);
+}
+
+int sh_human_skill_level(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)h->data[off + 0x11];
+}
+
+int sh_human_skill_hidden(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)h->data[off + 0x05];
+}
+
+int sh_human_skill_hidden_count(const sh_human *h, int id)
+{
+    int i, n, c = 0;
+
+    if (!valid_id(h, id)) return -1;
+    n = (int)rd16(h->data + h->off[id] + 0x2D);
+    for (i = 0; i < n && i < SH_HUMAN_SKILL_MAX; i++) {
+        int off = sh_human_skill_off(h, id, i);
+        if (off >= 0 && h->data[off + 0x05]) c++;
+    }
+    return c;
+}
+
+int sh_human_set_skill_sid(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < 0 || v > 65535) return -2;
+    wr16(h->data + off, (uint16_t)v);
+    return 0;
+}
+
+int sh_human_set_skill_level(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < 1 || v > sh_human_skill_level_max()) return -2;
+    h->data[off + 0x11] = (uint8_t)v;
+    return 0;
+}
+
+int sh_human_set_skill_hidden(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v != 0 && v != 1) return -2;
+    h->data[off + 0x05] = (uint8_t)v;
+    return 0;
+}
+
+int sh_human_skill_copy(sh_human *dst, int dst_cls, int dst_i,
+                        const sh_human *src, int src_cls, int src_i)
+{
+    int doff = sh_human_skill_off(dst, dst_cls, dst_i);
+    int soff = sh_human_skill_off(src, src_cls, src_i);
+
+    if (doff < 0 || soff < 0) return -1;
+    memmove(dst->data + doff, src->data + soff, SH_HUMAN_SUB);
+    return 0;
 }
 
 int sh_human_set_base(sh_human *h, int id, sh_human_field f, int v)
@@ -344,6 +450,17 @@ int sh_human_write(sh_human *h)
         if (sh_human_move(&chk, i) != sh_human_move(h, i)) {
             sh_human_free(&chk);
             return -2;
+        }
+        {
+            int n = sh_human_skill_count(h, i), k;
+            for (k = 0; k < n; k++) {
+                if (sh_human_skill_sid(&chk, i, k) != sh_human_skill_sid(h, i, k) ||
+                    sh_human_skill_level(&chk, i, k) != sh_human_skill_level(h, i, k) ||
+                    sh_human_skill_hidden(&chk, i, k) != sh_human_skill_hidden(h, i, k)) {
+                    sh_human_free(&chk);
+                    return -2;
+                }
+            }
         }
     }
     sh_human_free(&chk);

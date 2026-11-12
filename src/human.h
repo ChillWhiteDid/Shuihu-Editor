@@ -31,4 +31,9 @@ int sh_class_hidden_count(int cls);
 /* 第 class 条记录第 k 个隐藏技在技能列表中的下标；无则 -1 */
 int sh_class_hidden_index(int cls, int k);
 
+/* 构建期嵌入的「原始 HUMAN.HUM」字节（tools/gen_data.py 生成）。
+ * 用于导入窗口做原版参照；--stub 构建时 size 为 0。 */
+const unsigned char *sh_human_orig(void);
+int sh_human_orig_size(void);
+
 #endif /* SH_HUMAN_H */

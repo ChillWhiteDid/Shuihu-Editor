@@ -9,6 +9,19 @@ extern const unsigned short SH_SK_SID[];
 extern const unsigned char  SH_SK_LEVEL[];
 extern const unsigned char  SH_SK_HIDDEN[];
 extern const unsigned char  SH_CLASS_MOVE[];
+extern const unsigned char  SH_HUMAN_ORIG[];
+extern const int            SH_HUMAN_ORIG_SIZE;
+
+/* 构建期嵌入的原始 HUMAN.HUM（gen_data.py 从游戏数据生成；stub 构建时 size=0） */
+const unsigned char *sh_human_orig(void)
+{
+    return SH_HUMAN_ORIG;
+}
+
+int sh_human_orig_size(void)
+{
+    return SH_HUMAN_ORIG_SIZE;
+}
 
 int sh_class_count(void)
 {

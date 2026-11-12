@@ -92,10 +92,21 @@
 #define ID_HU_INFO     21331  /* 只读信息（技能条数 / 装备类型 / 未定字段） */
 #define ID_HU_SAVE     21340  /* 写入文件 */
 #define ID_HU_RESTORE  21343  /* 从备份恢复 HUMAN.HUM */
+#define ID_HU_SKILLS   21344  /* 打开技能表 */
 #define ID_HU_RELOAD   21341  /* 从磁盘重读 */
 #define ID_HU_CLOSE    21342  /* 关闭 */
+#define ID_HS_LIST     21400  /* 技能表窗口：技能列表 */
+#define ID_HS_SID      21410  /* 技能字符串 id */
+#define ID_HS_LEVEL    21411  /* 学习等级 */
+#define ID_HS_HIDDEN   21412  /* 隐藏技标志 0/1 */
+#define ID_HS_SAVE     21420  /* 写入文件 */
+#define ID_HS_IMPORT   21413  /* 整条导入技能 */
+#define ID_HS_CLOSE    21421  /* 关闭 */
+#define ID_IM_LIST     21500  /* 导入窗口：源技能列表 */
+#define ID_IM_OK       21501  /* 导入窗口：确认 */
+#define ID_IM_CANCEL   21502  /* 导入窗口：取消 */
 
-#define APP_VERSION  "v2.1"
+#define APP_VERSION  "v2.2"
 #define APP_BUILD    "2026-11-12"
 
 /* 界面上要显示的字段（不含类型 id） */
@@ -1554,6 +1565,18 @@ static HWND     s_humBase[SH_HF_COUNT];
 static HWND     s_humGrow[SH_HF_COUNT];
 static HWND     s_humMoveCtl;
 static HWND     s_humInfo;
+/* 载入/写入时的「隐藏技条数」基线：只有相对基线发生变化才值得警告
+ * （原版 72 个职业里 49 个是 0 条、23 个是 3 条，不是一律 3） */
+static int      s_humOrigHidden[SH_HUMAN_MAX];
+static sh_human s_humOrig;
+static int      s_humOrigLoaded;
+
+static void hu_snapshot(void)
+{
+    int i;
+    for (i = 0; i < s_hum.count && i < SH_HUMAN_MAX; i++)
+        s_humOrigHidden[i] = sh_human_skill_hidden_count(&s_hum, i);
+}
 
 /* 找 HUMAN.HUM：优先按存档目录推断，其次用已载入的 GOODS.DAB 同目录 */
 static int human_path(char *out, size_t n)
@@ -1604,6 +1627,12 @@ static int human_ensure(void)
     }
     s_humLoaded = 1;
     s_humSel = -1;
+    hu_snapshot();
+    /* 构建期嵌入的原始表：导入窗口永远以它为源，不受内存里已改内容影响 */
+    if (!s_humOrigLoaded && sh_human_orig_size() > 0) {
+        if (sh_human_load_mem(sh_human_orig(), (size_t)sh_human_orig_size(), &s_humOrig) == 0)
+            s_humOrigLoaded = 1;
+    }
     return 1;
 }
 
@@ -1745,6 +1774,7 @@ static void hu_commit(void)
         return;
     }
 
+    hu_snapshot();                  /* 写入成功：以磁盘内容作为新基线 */
     hu_fill_list();
     SendMessageA(s_humList, LB_SETCURSEL, s_humSel, 0);
     hu_show(s_humSel);
@@ -1810,11 +1840,429 @@ static void do_human_restore(HWND owner)
     }
     s_humLoaded = 1;
     s_humSel = -1;
+    hu_snapshot();
     hu_fill_list();
     SendMessageA(s_humList, LB_SETCURSEL, 0, 0);
     hu_show(0);
     status("已从备份恢复职业表：%s", s_bakPath[pick]);
     msg("完成", "已从备份恢复 HUMAN.HUM。", MB_ICONINFORMATION);
+}
+
+/* ---------------- 技能表（HUMAN.HUM 每职业 n 条 58 B 子项） ----------------
+ * 可改：技能字符串 id(+0x00)、隐藏标志(+0x05)、学习等级(+0x11)。
+ * 子项个数 n(+0x2D) 属于文件布局，只读。 */
+static HWND s_hsWnd, s_hsList, s_hsSid, s_hsLvl, s_hsHid;
+static int  s_hsSel = -1, s_hsCls = -1;
+
+static void hs_fill_list(void)
+{
+    int i, n = sh_human_skill_count(&s_hum, s_hsCls);
+
+    SendMessageA(s_hsList, LB_RESETCONTENT, 0, 0);
+    for (i = 0; i < n; i++) {
+        char row[260];
+        int sid = sh_human_skill_sid(&s_hum, s_hsCls, i);
+        const char *nm = sh_skill_name(sid);
+        sprintf(row, "%02d  %s   Lv%d%s", i + 1, (nm && nm[0]) ? nm : "?",
+                sh_human_skill_level(&s_hum, s_hsCls, i),
+                i == 0 ? "   [默认技]"
+                       : (sh_human_skill_hidden(&s_hum, s_hsCls, i) ? "   [隐藏]" : ""));
+        SendMessageA(s_hsList, LB_ADDSTRING, 0, (LPARAM)ansi(row));
+    }
+}
+
+static void hs_show(int i)
+{
+    char b[32];
+
+    if (i < 0 || i >= sh_human_skill_count(&s_hum, s_hsCls)) return;
+    SendMessageA(s_hsSid, CB_SETCURSEL, (WPARAM)sh_human_skill_sid(&s_hum, s_hsCls, i), 0);
+    sprintf(b, "%d", sh_human_skill_level(&s_hum, s_hsCls, i));
+    SetWindowTextA(s_hsLvl, b);
+    sprintf(b, "%d", sh_human_skill_hidden(&s_hum, s_hsCls, i));
+    SetWindowTextA(s_hsHid, b);
+    /* 第 1 条是默认技：不参与等级解锁、也不进必殺技面板，只允许换技能 id */
+    EnableWindow(s_hsLvl, i != 0);
+    EnableWindow(s_hsHid, i != 0);
+    s_hsSel = i;
+}
+
+/* 控件 → 内存；成功 1，失败 0（已弹提示） */
+static int hs_apply(void)
+{
+    char b[32];
+    int lv, hid;
+
+    if (s_hsSel < 0) return 1;
+
+    /* 技能一栏是只读的：换招式必须走「整条导入」，改名字没有意义 */
+    if (s_hsSel == 0) return 1;     /* 默认技：等级/隐藏也保持原值 */
+
+    GetWindowTextA(s_hsLvl, b, sizeof(b));
+    lv = atoi(b);
+    if (sh_human_set_skill_level(&s_hum, s_hsCls, s_hsSel, lv) != 0) {
+        msg("学习等级超范围", "学习等级必须在 1..30 之间。", MB_ICONWARNING);
+        return 0;
+    }
+    GetWindowTextA(s_hsHid, b, sizeof(b));
+    hid = atoi(b);
+    if (sh_human_set_skill_hidden(&s_hum, s_hsCls, s_hsSel, hid) != 0) {
+        msg("隐藏标志超范围", "隐藏技标志只能填 0（普通技）或 1（隐藏技）。", MB_ICONWARNING);
+        return 0;
+    }
+    return 1;
+}
+
+static void hs_write(void)
+{
+    int c;
+
+    if (!hs_apply()) return;
+
+    c = sh_human_skill_hidden_count(&s_hum, s_hsCls);
+    if (s_hsCls >= 0 && s_hsCls < SH_HUMAN_MAX && c != s_humOrigHidden[s_hsCls]) {
+        char m[700];
+        sprintf(m,
+            "这个职业的隐藏技条数变了：原版 %d 条 → 现在 %d 条。\n\n"
+            "存档里的「隐藏技标志块」是按条数对齐的，数量改变后\n"
+            "读档可能出现隐藏技错位或丢失。\n\n"
+            "仍然写入吗？", s_humOrigHidden[s_hsCls], c);
+        if (MessageBoxA(s_hsWnd, ansi(m), ansi("隐藏技条数异常"),
+                        MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+            return;
+    }
+
+    hu_commit();                    /* 备份 + 原子写 + 重读校验（含子项） */
+    hs_fill_list();
+    SendMessageA(s_hsList, LB_SETCURSEL, s_hsSel, 0);
+    hs_show(s_hsSel);
+}
+
+/* ---- 整条技能导入：列出全部职业的全部子项，选一条覆盖当前条目 ----
+ * 因为技能 id(+0) 只是名字，效果在其余字节里，换招式必须整条 58 B 一起抄。 */
+static HWND s_imWnd, s_imList;
+static int  s_imCls[SH_HUMAN_MAX * SH_HUMAN_SKILL_MAX];
+static int  s_imIdx[SH_HUMAN_MAX * SH_HUMAN_SKILL_MAX];
+static int  s_imCount, s_imChoice;
+
+static void im_fill(void)
+{
+    int c, k;
+    sh_human *src = s_humOrigLoaded ? &s_humOrig : &s_hum;
+
+    s_imCount = 0;
+    for (c = 0; c < src->count && c < SH_HUMAN_MAX; c++) {
+        int n = sh_human_skill_count(src, c);
+        for (k = 0; k < n && k < SH_HUMAN_SKILL_MAX; k++) {
+            char row[280], tag[40], mark[8];
+            const char *nm = sh_skill_name(sh_human_skill_sid(src, c, k));
+            const char *cn = hu_class_name(c);
+            int doff, soff;
+
+            if (cn[0]) sprintf(tag, "%s", cn);
+            else       sprintf(tag, "职业%02d", c);
+
+            /* 当前文件里这一条是否已与原始表不同（逐字节比较） */
+            mark[0] = '\0';
+            doff = sh_human_skill_off(&s_hum, c, k);
+            soff = sh_human_skill_off(src, c, k);
+            if (s_humOrigLoaded && doff >= 0 && soff >= 0 &&
+                memcmp(s_hum.data + doff, src->data + soff, SH_HUMAN_SUB) != 0)
+                strcpy(mark, "  *");
+
+            sprintf(row, "%s #%02d  %s  Lv%d%s%s",
+                    tag, k + 1, (nm && nm[0]) ? nm : "?",
+                    sh_human_skill_level(src, c, k),
+                    sh_human_skill_hidden(src, c, k) ? "  [隐藏]" : "", mark);
+            SendMessageA(s_imList, LB_ADDSTRING, 0, (LPARAM)ansi(row));
+            s_imCls[s_imCount] = c;
+            s_imIdx[s_imCount] = k;
+            s_imCount++;
+        }
+    }
+}
+static LRESULT CALLBACK ImportProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_CREATE: {
+        HWND st;
+
+        s_imList = CreateWindowExA(0, "LISTBOX", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
+            10, 8, 524, 336, hwnd, (HMENU)(INT_PTR)ID_IM_LIST, NULL, NULL);
+        if (g.hFont) SendMessageA(s_imList, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
+        st = CreateWindowExA(0, "STATIC",
+            ansi("列表来自 EXE 内置的原始 HUMAN 表，整条导入会覆盖目标条目的全部 58 字节；\n"
+                 "带 * 的条目表示当前文件里那条已和原始值不同。"),
+            WS_CHILD | WS_VISIBLE | SS_LEFT, 10, 344, 300, 36, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(st, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
+        {
+            HWND b1 = CreateWindowExA(0, "BUTTON", ansi("导入"),
+                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+                310, 356, 100, 28, hwnd, (HMENU)(INT_PTR)ID_IM_OK, NULL, NULL);
+            HWND b2 = CreateWindowExA(0, "BUTTON", ansi("取消"),
+                WS_CHILD | WS_VISIBLE, 422, 356, 80, 28, hwnd,
+                (HMENU)(INT_PTR)ID_IM_CANCEL, NULL, NULL);
+            if (g.hFont) {
+                SendMessageA(b1, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(b2, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            }
+        }
+        return 0;
+    }
+
+    case WM_COMMAND:
+        if (LOWORD(wp) == ID_IM_OK) {
+            s_imChoice = (int)SendMessageA(s_imList, LB_GETCURSEL, 0, 0);
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        if (LOWORD(wp) == ID_IM_CANCEL) { s_imChoice = -1; DestroyWindow(hwnd); return 0; }
+        return 0;
+
+    case WM_CLOSE:
+        s_imChoice = -1;
+        DestroyWindow(hwnd);
+        return 0;
+
+    case WM_DESTROY:
+        s_imWnd = NULL;
+        return 0;
+    }
+    return DefWindowProcA(hwnd, m, wp, lp);
+}
+
+static void do_hs_import(HWND owner)
+{
+    WNDCLASSA wc;
+    MSG msgLoop;
+    int srcC, srcI;
+
+    if (s_hsSel < 0) return;
+
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = ImportProc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = "ShuiHuHImport";
+    RegisterClassA(&wc);
+
+    s_imChoice = -1;
+    s_imWnd = CreateWindowExA(0, "ShuiHuHImport", ansi("整条导入技能（选择源技能）"),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        CW_USEDEFAULT, CW_USEDEFAULT, 556, 430,
+        owner, NULL, wc.hInstance, NULL);
+    if (!s_imWnd) return;
+
+    im_fill();
+    if (s_imCount > 0) SendMessageA(s_imList, LB_SETCURSEL, 0, 0);
+
+    EnableWindow(owner, FALSE);
+    ShowWindow(s_imWnd, SW_SHOW);
+    UpdateWindow(s_imWnd);
+    while (s_imWnd && GetMessageA(&msgLoop, NULL, 0, 0) > 0) {
+        if (!IsDialogMessageA(s_imWnd, &msgLoop)) {
+            TranslateMessage(&msgLoop);
+            DispatchMessageA(&msgLoop);
+        }
+    }
+    EnableWindow(owner, TRUE);
+    SetActiveWindow(owner);
+    tip_hide();
+    RedrawWindow(owner, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+
+    if (s_imChoice < 0 || s_imChoice >= s_imCount) return;
+    srcC = s_imCls[s_imChoice];
+    srcI = s_imIdx[s_imChoice];
+
+    if (sh_human_skill_copy(&s_hum, s_hsCls, s_hsSel,
+                             s_humOrigLoaded ? &s_humOrig : &s_hum, srcC, srcI) != 0) {
+        msg("导入失败", "源或目标条目无效。", MB_ICONERROR);
+        return;
+    }
+    hs_fill_list();
+    SendMessageA(s_hsList, LB_SETCURSEL, s_hsSel, 0);
+    hs_show(s_hsSel);
+    status("已从「职业%02d #%02d」整条导入（尚未写入文件）", srcC, srcI + 1);
+}
+
+static LRESULT CALLBACK HumanSkillProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_CREATE: {
+        HWND c;
+
+        s_hsList = CreateWindowExA(0, "LISTBOX", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
+            10, 8, 360, 340, hwnd, (HMENU)(INT_PTR)ID_HS_LIST, NULL, NULL);
+        if (g.hFont) SendMessageA(s_hsList, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
+        c = CreateWindowExA(0, "STATIC", ansi("技能"),
+            WS_CHILD | WS_VISIBLE, 382, 10, 80, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        s_hsSid = CreateWindowExA(0, "COMBOBOX", "",
+            WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_VSCROLL | CBS_DROPDOWNLIST,
+            382, 30, 210, 260, hwnd, (HMENU)(INT_PTR)ID_HS_SID, NULL, NULL);
+
+        c = CreateWindowExA(0, "STATIC", ansi("学习等级 1-30"),
+            WS_CHILD | WS_VISIBLE, 382, 66, 120, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        s_hsLvl = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+            382, 88, 90, 22, hwnd, (HMENU)(INT_PTR)ID_HS_LEVEL, NULL, NULL);
+
+        c = CreateWindowExA(0, "STATIC", ansi("隐藏技 0/1"),
+            WS_CHILD | WS_VISIBLE, 382, 122, 120, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        s_hsHid = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+            382, 144, 90, 22, hwnd, (HMENU)(INT_PTR)ID_HS_HIDDEN, NULL, NULL);
+
+        c = CreateWindowExA(0, "STATIC",
+            ansi("技能一栏只读；换招式请点[整条导入]，它会把源技能的整条 58 字节覆盖过来。\n"
+                 "学习等级：角色达到该等级后，此必殺技在面板解锁。\n"
+                 "隐藏技：0 = 普通技，1 = 隐藏技（原版每职业 0 或 3 条）。\n"
+                 "第 1 条[默认技]开局即有，不参与等级解锁。写入前会自动备份。"),
+            WS_CHILD | WS_VISIBLE | SS_LEFT, 10, 396, 596, 66, hwnd, NULL, NULL, NULL);
+        if (g.hFont) {
+            SendMessageA(s_hsSid, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(s_hsLvl, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(s_hsHid, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        }
+
+        {   /* 技能下拉：索引 = 技能字符串 id，文字 = "id  技能名" */
+            int k, cnt = sh_skill_name_count();
+            for (k = 0; k < cnt; k++) {
+                char row[220];
+                sprintf(row, "%d  %s", k, sh_skill_name(k));
+                SendMessageA(s_hsSid, CB_ADDSTRING, 0, (LPARAM)ansi(row));
+            }
+        }
+
+        {
+            HWND b0 = CreateWindowExA(0, "BUTTON", ansi("整条导入"),
+                WS_CHILD | WS_VISIBLE, 26, 360, 100, 28, hwnd,
+                (HMENU)(INT_PTR)ID_HS_IMPORT, NULL, NULL);
+            HWND b1 = CreateWindowExA(0, "BUTTON", ansi("写入文件"),
+                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+                150, 360, 100, 28, hwnd, (HMENU)(INT_PTR)ID_HS_SAVE, NULL, NULL);
+            HWND b2 = CreateWindowExA(0, "BUTTON", ansi("关闭"),
+                WS_CHILD | WS_VISIBLE, 262, 360, 80, 28, hwnd,
+                (HMENU)(INT_PTR)ID_HS_CLOSE, NULL, NULL);
+            if (g.hFont) {
+                SendMessageA(b0, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(b1, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(b2, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            }
+        }
+        return 0;
+    }
+
+    case WM_TIMER:
+        if (wp == 2 && GetActiveWindow() == s_hsWnd) {
+            static const char *ts =
+                "技能：下拉选择「id + 技能名」，换一项即换技能（名字与效果一起变）。\n"
+                "第 1 条是默认技，只允许换 id。";
+            static const char *tl =
+                "学习等级 1-30：角色等级达到后，该必殺技在面板上解锁。\n"
+                "第 1 条默认技不参与解锁，此项已禁用。";
+            static const char *th =
+                "隐藏技 0/1：0 = 普通技，1 = 隐藏技。原版每职业恰好 3 条隐藏技。\n"
+                "第 1 条默认技不进必殺技面板，此项已禁用。";
+            sh_tip_item map[3];
+            map[0].h = s_hsSid; map[0].text = ts;
+            map[1].h = s_hsLvl; map[1].text = tl;
+            map[2].h = s_hsHid; map[2].text = th;
+            tip_poll(map, 3);
+        }
+        return 0;
+
+    case WM_COMMAND:
+        if (LOWORD(wp) == ID_HS_LIST && HIWORD(wp) == LBN_SELCHANGE) {
+            int sel = (int)SendMessageA(s_hsList, LB_GETCURSEL, 0, 0);
+            if (sel >= 0 && sel != s_hsSel) {
+                if (!hs_apply()) {
+                    SendMessageA(s_hsList, LB_SETCURSEL, s_hsSel, 0);
+                    return 0;
+                }
+                hs_show(sel);
+            }
+            return 0;
+        }
+        if (LOWORD(wp) == ID_HS_SAVE)  { hs_write(); return 0; }
+        if (LOWORD(wp) == ID_HS_IMPORT) { do_hs_import(hwnd); return 0; }
+        if (LOWORD(wp) == ID_HS_CLOSE) { DestroyWindow(hwnd); return 0; }
+        return 0;
+
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+
+    case WM_DESTROY:
+        s_hsWnd = NULL;
+        return 0;
+    }
+    return DefWindowProcA(hwnd, m, wp, lp);
+}
+
+static void do_human_skills(HWND owner)
+{
+    WNDCLASSA wc;
+    MSG msgLoop;
+    char title[160];
+    const char *nm = hu_class_name(s_hsCls);
+
+    s_hsCls = s_humSel;
+    if (s_hsCls < 0) return;
+    if (sh_human_skill_count(&s_hum, s_hsCls) <= 0) {
+        msg("没有技能", "这个职业的记录里技能条数为 0。", MB_ICONINFORMATION);
+        return;
+    }
+
+    if (nm[0])
+        sprintf(title, "技能表 —— %s（%d 条）", nm, sh_human_skill_count(&s_hum, s_hsCls));
+    else
+        sprintf(title, "技能表 —— 职业 %d（%d 条）", s_hsCls, sh_human_skill_count(&s_hum, s_hsCls));
+
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = HumanSkillProc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = "ShuiHuHSkill";
+    RegisterClassA(&wc);
+
+    s_hsWnd = CreateWindowExA(0, "ShuiHuHSkill", ansi(title),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        CW_USEDEFAULT, CW_USEDEFAULT, 620, 492,
+        owner, NULL, wc.hInstance, NULL);
+    if (!s_hsWnd) return;
+
+    s_hsSel = -1;
+    hs_fill_list();
+    SendMessageA(s_hsList, LB_SETCURSEL, 0, 0);
+    hs_show(0);
+
+    SetTimer(s_hsWnd, 2, 200, NULL);     /* tooltip 轮询 */
+    EnableWindow(owner, FALSE);
+    ShowWindow(s_hsWnd, SW_SHOW);
+    UpdateWindow(s_hsWnd);
+    while (s_hsWnd && GetMessageA(&msgLoop, NULL, 0, 0) > 0) {
+        if (!IsDialogMessageA(s_hsWnd, &msgLoop)) {
+            TranslateMessage(&msgLoop);
+            DispatchMessageA(&msgLoop);
+        }
+    }
+    EnableWindow(owner, TRUE);
+    SetActiveWindow(owner);
+    tip_hide();
+    RedrawWindow(owner, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 
 static LRESULT CALLBACK HumanProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
@@ -1871,6 +2319,11 @@ static LRESULT CALLBACK HumanProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
             SendMessageA(s_humInfo, WM_SETFONT, (WPARAM)g.hFont, TRUE);
         }
 
+        c = CreateWindowExA(0, "BUTTON", ansi("人物技能表"),
+            WS_CHILD | WS_VISIBLE, 276, 258, 180, 30, hwnd,
+            (HMENU)(INT_PTR)ID_HU_SKILLS, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
         c = CreateWindowExA(0, "STATIC",
             ansi("改的是游戏本体数据（Data\\HUMAN.HUM），72 个职业一起生效，不是某个存档。\n"
                  "写入前自动备份，写后重读校验。面板 = 基础 × 成长率^等级（夹 255 / 510）。"),
@@ -1913,6 +2366,7 @@ static LRESULT CALLBACK HumanProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
             return 0;
         }
         if (LOWORD(wp) == ID_HU_RESTORE) { do_human_restore(hwnd); return 0; }
+        if (LOWORD(wp) == ID_HU_SKILLS)  { do_human_skills(hwnd);  return 0; }
         if (LOWORD(wp) == ID_HU_SAVE) { hu_commit(); return 0; }
         if (LOWORD(wp) == ID_HU_RELOAD) {
             char path[SH_HUMAN_PATH];
@@ -1930,6 +2384,7 @@ static LRESULT CALLBACK HumanProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
             }
             s_humLoaded = 1;
             s_humSel = -1;
+            hu_snapshot();
             hu_fill_list();
             SendMessageA(s_humList, LB_SETCURSEL, 0, 0);
             hu_show(0);
@@ -2639,6 +3094,88 @@ static void do_uitest(HWND hwnd)
                 (okId && okParse && okRW) ? "PASS" : "FAIL");
     }
 
+    /* case23：技能子项读写（学习等级 / 隐藏标志 / 技能 id，只改内存） */
+    {
+        char hp[SH_HUMAN_PATH];
+        sh_human hu;
+        int rc = -99, ok = 0, n = -1, lv0 = -1, hidc = -1;
+
+        hp[0] = '\0';
+        if (sh_human_locate(g.path, hp, sizeof(hp))) rc = sh_human_load(hp, &hu);
+        if (rc == 0) {
+            int sid0;
+            n = sh_human_skill_count(&hu, 0);
+            sid0 = sh_human_skill_sid(&hu, 0, 0);
+            lv0 = sh_human_skill_level(&hu, 0, 0);
+            hidc = sh_human_skill_hidden_count(&hu, 0);
+            ok = (n > 0) &&
+                 (sid0 >= 0) && (sid0 < sh_skill_name_count()) &&
+                 (lv0 >= 1 && lv0 <= 30) && (hidc == 3) &&
+                 (sh_human_skill_off(&hu, 0, n) == -1) &&
+                 (sh_human_set_skill_level(&hu, 0, 0, 30) == 0) &&
+                 (sh_human_skill_level(&hu, 0, 0) == 30) &&
+                 (sh_human_set_skill_level(&hu, 0, 0, 31) == -2) &&
+                 (sh_human_set_skill_level(&hu, 0, 0, lv0) == 0) &&
+                 (sh_human_set_skill_hidden(&hu, 0, 0, 2) == -2) &&
+                 (sh_human_set_skill_sid(&hu, 0, 0, sid0) == 0) &&
+                 (sh_human_skill_sid(&hu, 0, 0) == sid0);
+            sh_human_free(&hu);
+        }
+        fprintf(f, "case23 技能子项: rc=%d 条数=%d 首条等级=%d 隐藏=%d -> %s\r\n",
+                rc, n, lv0, hidc, ok ? "PASS" : "FAIL");
+    }
+
+    /* case24：整条技能导入（跨缓冲复制 + 复原，只改内存） */
+    {
+        char hp[SH_HUMAN_PATH];
+        sh_human a, b;
+        int rca = -99, rcb = -99, ok = 0;
+
+        hp[0] = '\0';
+        if (sh_human_locate(g.path, hp, sizeof(hp))) {
+            rca = sh_human_load(hp, &a);
+            rcb = sh_human_load(hp, &b);
+        }
+        if (rca == 0 && rcb == 0) {
+            int n = sh_human_skill_count(&a, 0);
+            if (n >= 2) {
+                int s0 = sh_human_skill_sid(&b, 0, 0), l0 = sh_human_skill_level(&b, 0, 0);
+                int s1 = sh_human_skill_sid(&b, 0, 1), l1 = sh_human_skill_level(&b, 0, 1);
+                ok = (sh_human_skill_copy(&a, 0, 1, &b, 0, 0) == 0) &&
+                     (sh_human_skill_sid(&a, 0, 1) == s0) &&
+                     (sh_human_skill_level(&a, 0, 1) == l0) &&
+                     (sh_human_skill_copy(&a, 0, 1, &b, 0, 1) == 0) &&
+                     (sh_human_skill_sid(&a, 0, 1) == s1) &&
+                     (sh_human_skill_level(&a, 0, 1) == l1) &&
+                     (sh_human_skill_copy(&a, 0, 99, &b, 0, 0) == -1);
+            }
+        }
+        if (rca == 0) sh_human_free(&a);
+        if (rcb == 0) sh_human_free(&b);
+        fprintf(f, "case24 整条技能导入: rc=%d/%d -> %s\r\n",
+                rca, rcb, ok ? "PASS" : "FAIL");
+    }
+
+    /* case25：EXE 内置的原始 HUMAN 表 */
+    {
+        sh_human org;
+        int rc = -99, ok = 0, cnt = 0, skills = 0;
+
+        if (sh_human_orig_size() > 0)
+            rc = sh_human_load_mem(sh_human_orig(), (size_t)sh_human_orig_size(), &org);
+        if (rc == 0) {
+            int c, k;
+            cnt = org.count;
+            for (c = 0; c < cnt; c++) {
+                int n = sh_human_skill_count(&org, c);
+                for (k = 0; k < n && k < SH_HUMAN_SKILL_MAX; k++) skills++;
+            }
+            ok = (sh_human_orig_size() == SH_HUMAN_SIZE) && (cnt == 72) && (skills == 302);
+            sh_human_free(&org);
+        }
+        fprintf(f, "case25 内置原始表: size=%d 职业=%d 技能=%d -> %s\r\n",
+                sh_human_orig_size(), cnt, skills, ok ? "PASS" : "FAIL");
+    }
     /* case18：道具的 敏捷(+96) / 必殺(+100) 字段读写 */
     {
         char gp[600];

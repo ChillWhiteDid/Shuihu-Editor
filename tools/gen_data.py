@@ -252,6 +252,16 @@ def emit_human(human_path, src_dir):
         for i, v in enumerate(moves):
             fh.write("    %d,%s" % (v, "" if (i + 1) % 20 else "\n"))
         fh.write("\n};\n")
+
+    # HUMAN.HUM 原始字节（构建期嵌入，供导入窗口做「原版参照」）
+    with open(out2, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n/* HUMAN.HUM 原始字节（%d B） */\n" % len(data))
+        fh.write("const unsigned char SH_HUMAN_ORIG[] = {\n")
+        for i, b in enumerate(data):
+            fh.write("%d," % b)
+            if (i + 1) % 24 == 0:
+                fh.write("\n")
+        fh.write("\n};\nconst int SH_HUMAN_ORIG_SIZE = %d;\n" % len(data))
     print("human      :", len(recs), "职业 /", len(flat), "条技能")
     return out
 
@@ -313,6 +323,9 @@ def write_stub(src_dir):
         fh.write("const unsigned short SH_SK_SID[] = { 0 };\n")
         fh.write("const unsigned char SH_SK_LEVEL[] = { 0 };\n")
         fh.write("const unsigned char SH_SK_HIDDEN[] = { 0 };\n")
+        fh.write("const unsigned char SH_CLASS_MOVE[] = { 0 };\n")
+        fh.write("const unsigned char SH_HUMAN_ORIG[] = { 0 };\n")
+        fh.write("const int SH_HUMAN_ORIG_SIZE = 0;\n")
 
     print("已生成空表（stub）到", src_dir)
     print("  注意: 道具表/技能表为空，程序可用但看不到名字。")

@@ -57,6 +57,8 @@ typedef struct {
  *  -1 打不开  -2 文件太小  -3 内存不足
  *  -4 头/步长不对（不是 HUMAN.HUM 或已损坏）  -5 记录走完对不上文件长度 */
 int  sh_human_load(const char *path, sh_human *h);
+/* 从内存缓冲解析（会自己 malloc 一份副本；用于构建期嵌入的原始数据） */
+int  sh_human_load_mem(const uint8_t *buf, size_t size, sh_human *h);
 void sh_human_free(sh_human *h);
 
 const char *sh_human_field_label(sh_human_field f);   /* 最大体力…必殺 */
@@ -69,6 +71,29 @@ int  sh_human_move(const sh_human *h, int id);
 int  sh_human_skill_count(const sh_human *h, int id);
 int  sh_human_u8(const sh_human *h, int id, int off);
 int  sh_human_u16(const sh_human *h, int id, int off);
+
+/* ---- 58 B 技能子项（每职业 n 条，n = 记录 +0x2D） ----
+ * 子项内偏移：+0x00 u16 技能字符串 id、+0x05 隐藏标志(0/1)、+0x11 学习等级(1..30)
+ * 注意：子项个数 n 属于文件布局，本模块只读不写。 */
+#define SH_HUMAN_SKILL_MAX 64
+
+int  sh_human_skill_off(const sh_human *h, int id, int i);   /* data 内偏移；非法 -1 */
+int  sh_human_skill_sid(const sh_human *h, int id, int i);
+int  sh_human_skill_level(const sh_human *h, int id, int i);
+int  sh_human_skill_hidden(const sh_human *h, int id, int i);
+int  sh_human_skill_hidden_count(const sh_human *h, int id);
+int  sh_human_skill_level_max(void);   /* 30 */
+
+/* 只改内存；成功 0，参数非法 -1，超范围 -2 */
+int  sh_human_set_skill_sid(sh_human *h, int id, int i, int v);
+int  sh_human_set_skill_level(sh_human *h, int id, int i, int v);
+int  sh_human_set_skill_hidden(sh_human *h, int id, int i, int v);
+
+/* 整条导入：把 src 职业 src_cls 的第 src_i 条 58 字节原样复制到
+ * dst 职业 dst_cls 的第 dst_i 条（同一文件内也允许，内部用 memmove）。
+ * 成功 0，参数/越界 -1。 */
+int  sh_human_skill_copy(sh_human *dst, int dst_cls, int dst_i,
+                         const sh_human *src, int src_cls, int src_i);
 
 /* 只改内存。成功 0，失败负值：-1 参数非法，-2 超范围 */
 int  sh_human_set_base(sh_human *h, int id, sh_human_field f, int v);
