@@ -107,12 +107,20 @@
 #define ID_HS_SAVE     21420  /* 写入文件 */
 #define ID_HS_IMPORT   21413  /* 整条导入技能 */
 #define ID_HS_CLOSE    21421  /* 关闭 */
+#define ID_HS_BATTLE   21422  /* 战斗参数（弹子窗口） */
 #define ID_IM_LIST     21500  /* 导入窗口：源技能列表 */
 #define ID_IM_OK       21501  /* 导入窗口：确认 */
 #define ID_IM_CANCEL   21502  /* 导入窗口：取消 */
+/* 战斗参数子窗口（技能表 → 战斗参数）—— 21600 段 */
+#define ID_BS_HIT      21601  /* 命中修正（有符号） */
+#define ID_BS_CRIT     21602  /* 暴击修正 */
+#define ID_BS_STATUS   21603  /* 附加状态概率 % */
+#define ID_BS_SEG      21610  /* 4 段攻击表：21610 + seg*3 + field */
+#define ID_BS_SAVE     21630  /* 写入文件 */
+#define ID_BS_CLOSE    21631  /* 关闭 */
 
-#define APP_VERSION  "v2.2.2"
-#define APP_BUILD    "2026-11-12"
+#define APP_VERSION  "v2.2.3"
+#define APP_BUILD    "2026-11-13"
 
 /* 界面上要显示的字段（不含类型 id） */
 static const sh_field kFields[] = {
@@ -348,12 +356,18 @@ static void fill_list(void)
 {
     int i;
     char buf[160];
+    const char *lv;
 
     SendMessageA(g.hList, LB_RESETCONTENT, 0, 0);
     g.mapCount = 0;
     for (i = 0; i < g.s.count; i++) {
+        const char *tag;
         if (!sh_is_playable(&g.s.units[i])) continue;
-        sprintf(buf, "%2u  %s", (unsigned)g.s.units[i].id,
+        /* 队别（unit+0x3B）：0=我方 1=中立 2=敌方 —— 报告 v1.74 §4.35.3。
+         * 同一 type id 可能出现多条，队别是区分"队伍成员 / 敌人"的第一层依据。 */
+        tag = (g.s.units[i].team == 0) ? "[我]" :
+              (g.s.units[i].team == 1) ? "[中]" : "[敌]";
+        sprintf(buf, "%s %2u  %s", tag, (unsigned)g.s.units[i].id,
                 sh_char_name(g.s.units[i].id));
         SendMessageA(g.hList, LB_ADDSTRING, 0, (LPARAM)ansi(buf));
         g.map[g.mapCount++] = i;
@@ -365,6 +379,13 @@ static void fill_list(void)
     }
     SendMessageA(g.hList, LB_SETCURSEL, 0, 0);
     g.sel = g.map[0];
+
+    /* 关卡号 → 地图名（报告 v1.76 §4.36.1） */
+    lv = sh_level_name((int)g.s.level);
+    if (lv)
+        status("关卡 %d：%s    共 %d 条角色（含敌方/中立）", (int)g.s.level, lv, g.mapCount);
+    else
+        status("关卡号 %d（未知关卡）    共 %d 条角色", (int)g.s.level, g.mapCount);
 }
 
 static void clear_fields(void)
@@ -1862,6 +1883,11 @@ static int  s_hsOrder[32];      /* 列表行 → 技能真实序号 */
 static unsigned short s_seIds[64];   /* 动画特效下拉：条目 → SE 编号 */
 static int  s_seN;
 static int  s_hsCount;
+/* 战斗参数子窗口控件（15 个编辑框：3 个基础 + 4 段 × 3 字段） */
+static HWND s_bsWnd, s_bsInfo, s_bsSave, s_bsClose;
+static HWND s_bsHit, s_bsCrit, s_bsStatus;
+static HWND s_bsSeg[4][3];
+static int  s_bsSkill = -1;     /* 编辑中的技能序号 */
 
 /* 技能真实序号 → 列表行号（找不到返回 -1） */
 static int hs_row_of(int skillIdx)
@@ -2034,6 +2060,234 @@ static void hs_write(void)
     hs_fill_list();
     SendMessageA(s_hsList, LB_SETCURSEL, hs_row_of(s_hsSel), 0);
     hs_show(s_hsSel);
+}
+
+/* ================= 战斗参数子窗口（报告 §4.33.1 / §4.33.3） =================
+ * 编辑 58 B 子项里「战斗数值」那一半：
+ *   +0x0A 附加状态概率 / +0x14 命中修正（有符号）/ +0x16 暴击修正
+ *   +0x1C 起 4 段攻击表（每段：触发帧 / 伤害倍率% / 方向偏移）
+ * 之所以单独开窗：技能表主窗口已经排满，且这 15 个值只有调平衡时才动。 */
+
+static void bs_show(void)
+{
+    char b[32], info[256];
+    int k;
+
+    if (s_bsSkill < 0) return;
+    sprintf(b, "%d", sh_human_skill_status(&s_hum, s_hsCls, s_bsSkill));
+    SetWindowTextA(s_bsStatus, b);
+    sprintf(b, "%d", sh_human_skill_hit(&s_hum, s_hsCls, s_bsSkill));
+    SetWindowTextA(s_bsHit, b);
+    sprintf(b, "%d", sh_human_skill_crit(&s_hum, s_hsCls, s_bsSkill));
+    SetWindowTextA(s_bsCrit, b);
+    for (k = 0; k < 4; k++) {
+        sprintf(b, "%d", sh_human_skill_seg(&s_hum, s_hsCls, s_bsSkill, k, 0));
+        SetWindowTextA(s_bsSeg[k][0], b);
+        sprintf(b, "%d", sh_human_skill_seg(&s_hum, s_hsCls, s_bsSkill, k, 1));
+        SetWindowTextA(s_bsSeg[k][1], b);
+        sprintf(b, "%d", sh_human_skill_seg(&s_hum, s_hsCls, s_bsSkill, k, 2));
+        SetWindowTextA(s_bsSeg[k][2], b);
+    }
+    {   /* 信息行：段数 + 技能名 */
+        int segs = 0;
+        for (k = 0; k < 4; k++)
+            if (sh_human_skill_seg(&s_hum, s_hsCls, s_bsSkill, k, 1) != 0) segs++;
+        sprintf(info, "技能 %d「%s」  共 %d 段（倍率为 0 的段不触发）",
+                s_bsSkill + 1,
+                sh_skill_name(sh_human_skill_sid(&s_hum, s_hsCls, s_bsSkill)),
+                segs);
+        SetWindowTextA(s_bsInfo, ansi(info));
+    }
+}
+
+static int bs_apply(void)
+{
+    char b[32];
+    int k;
+
+    if (s_bsSkill < 0) return 1;
+
+    GetWindowTextA(s_bsStatus, b, sizeof(b));
+    if (sh_human_set_skill_status(&s_hum, s_hsCls, s_bsSkill, atoi(b)) != 0) {
+        msg("附加状态概率超范围", "填 0..100（百分点，0 = 不附加状态）。", MB_ICONWARNING);
+        return 0;
+    }
+    GetWindowTextA(s_bsHit, b, sizeof(b));
+    if (sh_human_set_skill_hit(&s_hum, s_hsCls, s_bsSkill, atoi(b)) != 0) {
+        msg("命中修正超范围", "填 -999..999（可以是负数，原版重型武器为 -5/-10/-15）。", MB_ICONWARNING);
+        return 0;
+    }
+    GetWindowTextA(s_bsCrit, b, sizeof(b));
+    if (sh_human_set_skill_crit(&s_hum, s_hsCls, s_bsSkill, atoi(b)) != 0) {
+        msg("暴击修正超范围", "填 0..999（原版 5..50）。", MB_ICONWARNING);
+        return 0;
+    }
+    for (k = 0; k < 4; k++) {
+        int f;
+        for (f = 0; f < 3; f++) {
+            GetWindowTextA(s_bsSeg[k][f], b, sizeof(b));
+            if (sh_human_set_skill_seg(&s_hum, s_hsCls, s_bsSkill, k, f, atoi(b)) != 0) {
+                msg("攻击段数值超范围", "触发帧/倍率/方向都填 0..9999。", MB_ICONWARNING);
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static void bs_write(void)
+{
+    if (!bs_apply()) return;
+    hu_commit();
+    bs_show();
+}
+
+static LRESULT CALLBACK BattleProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_CREATE: {
+        HWND c;
+        int k;
+
+        s_bsInfo = CreateWindowExA(0, "STATIC", "",
+            WS_CHILD | WS_VISIBLE | SS_LEFT, 12, 10, 460, 20, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(s_bsInfo, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
+        c = CreateWindowExA(0, "STATIC", ansi("命中修正"),
+            WS_CHILD | WS_VISIBLE, 12, 40, 80, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        s_bsHit = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+            12, 60, 70, 22, hwnd, (HMENU)(INT_PTR)ID_BS_HIT, NULL, NULL);
+
+        c = CreateWindowExA(0, "STATIC", ansi("暴击修正"),
+            WS_CHILD | WS_VISIBLE, 100, 40, 80, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        s_bsCrit = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+            100, 60, 70, 22, hwnd, (HMENU)(INT_PTR)ID_BS_CRIT, NULL, NULL);
+
+        c = CreateWindowExA(0, "STATIC", ansi("附加状态概率 %"),
+            WS_CHILD | WS_VISIBLE, 190, 40, 130, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        s_bsStatus = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+            190, 60, 70, 22, hwnd, (HMENU)(INT_PTR)ID_BS_STATUS, NULL, NULL);
+
+        /* 表头 */
+        c = CreateWindowExA(0, "STATIC", ansi("四段攻击表"),
+            WS_CHILD | WS_VISIBLE, 12, 96, 200, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        c = CreateWindowExA(0, "STATIC", ansi("触发帧"),
+            WS_CHILD | WS_VISIBLE, 92, 116, 70, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        c = CreateWindowExA(0, "STATIC", ansi("伤害倍率 %"),
+            WS_CHILD | WS_VISIBLE, 180, 116, 90, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+        c = CreateWindowExA(0, "STATIC", ansi("方向"),
+            WS_CHILD | WS_VISIBLE, 290, 116, 60, 18, hwnd, NULL, NULL, NULL);
+        if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+
+        for (k = 0; k < 4; k++) {
+            char lbl[16];
+            int y = 138 + k * 30;
+            sprintf(lbl, "第 %d 段", k + 1);
+            c = CreateWindowExA(0, "STATIC", ansi(lbl),
+                WS_CHILD | WS_VISIBLE, 12, y + 4, 70, 18, hwnd, NULL, NULL, NULL);
+            if (g.hFont) SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            s_bsSeg[k][0] = CreateWindowExA(0, "EDIT", "",
+                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+                92, y, 70, 22, hwnd, (HMENU)(INT_PTR)(ID_BS_SEG + k * 3 + 0), NULL, NULL);
+            s_bsSeg[k][1] = CreateWindowExA(0, "EDIT", "",
+                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+                180, y, 90, 22, hwnd, (HMENU)(INT_PTR)(ID_BS_SEG + k * 3 + 1), NULL, NULL);
+            s_bsSeg[k][2] = CreateWindowExA(0, "EDIT", "",
+                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+                290, y, 60, 22, hwnd, (HMENU)(INT_PTR)(ID_BS_SEG + k * 3 + 2), NULL, NULL);
+        }
+
+        s_bsSave = CreateWindowExA(0, "BUTTON", ansi("写入文件"),
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            140, 268, 100, 28, hwnd, (HMENU)(INT_PTR)ID_BS_SAVE, NULL, NULL);
+        s_bsClose = CreateWindowExA(0, "BUTTON", ansi("关闭"),
+            WS_CHILD | WS_VISIBLE, 252, 268, 90, 28, hwnd, (HMENU)(INT_PTR)ID_BS_CLOSE, NULL, NULL);
+
+        c = CreateWindowExA(0, "STATIC",
+            ansi("命中修正：命中 = 攻方命中 − 守方敏捷/2 + 本值（可负，重型武器原版为负）。\n"
+                 "暴击修正：暴击率 = 攻方必殺/2 + 本值。\n"
+                 "附加状态概率：与攻方 +0x52 相加后 rand()%100 判定，命中则挂状态 1。\n"
+                 "四段攻击表：每段 触发帧 / 伤害倍率% / 方向；倍率填 0 = 该段不触发。\n"
+                 "例：八面威風 4 段 6/100% 8/100% 17/100% 18/100%；九死一生 3 段 7/30% 14/50% 20/20%。"),
+            WS_CHILD | WS_VISIBLE | SS_LEFT, 12, 300, 470, 110, hwnd, NULL, NULL, NULL);
+        if (g.hFont) {
+            SendMessageA(s_bsHit, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(s_bsCrit, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(s_bsStatus, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(s_bsSave, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(s_bsClose, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            SendMessageA(c, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            for (k = 0; k < 4; k++) {
+                int f;
+                for (f = 0; f < 3; f++)
+                    SendMessageA(s_bsSeg[k][f], WM_SETFONT, (WPARAM)g.hFont, TRUE);
+            }
+        }
+        return 0;
+    }
+
+    case WM_COMMAND:
+        if (LOWORD(wp) == ID_BS_SAVE)  { bs_write(); return 0; }
+        if (LOWORD(wp) == ID_BS_CLOSE) { DestroyWindow(hwnd); return 0; }
+        return 0;
+
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+
+    case WM_DESTROY:
+        s_bsWnd = NULL;
+        return 0;
+    }
+    return DefWindowProcA(hwnd, m, wp, lp);
+}
+
+static void bs_open(HWND owner)
+{
+    WNDCLASSA wc;
+    char title[200];
+    MSG msgLoop;
+
+    if (s_bsWnd) { SetForegroundWindow(s_bsWnd); return; }
+
+    s_bsSkill = s_hsSel;
+    sprintf(title, "战斗参数 —— 技能 %d「%s」", s_bsSkill + 1,
+            sh_skill_name(sh_human_skill_sid(&s_hum, s_hsCls, s_bsSkill)));
+
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = BattleProc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = "ShuiHuBattle";
+    RegisterClassA(&wc);
+
+    s_bsWnd = CreateWindowExA(0, "ShuiHuBattle", ansi(title),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        CW_USEDEFAULT, CW_USEDEFAULT, 500, 465,
+        owner, NULL, wc.hInstance, NULL);
+    if (!s_bsWnd) return;
+    bs_show();
+    EnableWindow(owner, FALSE);
+    ShowWindow(s_bsWnd, SW_SHOW);
+    UpdateWindow(s_bsWnd);
+    while (s_bsWnd && GetMessageA(&msgLoop, NULL, 0, 0) > 0) {
+        if (!IsDialogMessageA(s_bsWnd, &msgLoop)) {
+            TranslateMessage(&msgLoop);
+            DispatchMessageA(&msgLoop);
+        }
+    }
+    EnableWindow(owner, TRUE);
+    SetActiveWindow(owner);
 }
 
 /* ---- 整条技能导入：列出全部职业的全部子项，选一条覆盖当前条目 ----
@@ -2333,10 +2587,14 @@ static LRESULT CALLBACK HumanSkillProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
             HWND b2 = CreateWindowExA(0, "BUTTON", ansi("关闭"),
                 WS_CHILD | WS_VISIBLE, 262, 400, 80, 28, hwnd,
                 (HMENU)(INT_PTR)ID_HS_CLOSE, NULL, NULL);
+            HWND b3 = CreateWindowExA(0, "BUTTON", ansi("战斗参数..."),
+                WS_CHILD | WS_VISIBLE, 358, 400, 110, 28, hwnd,
+                (HMENU)(INT_PTR)ID_HS_BATTLE, NULL, NULL);
             if (g.hFont) {
                 SendMessageA(b0, WM_SETFONT, (WPARAM)g.hFont, TRUE);
                 SendMessageA(b1, WM_SETFONT, (WPARAM)g.hFont, TRUE);
                 SendMessageA(b2, WM_SETFONT, (WPARAM)g.hFont, TRUE);
+                SendMessageA(b3, WM_SETFONT, (WPARAM)g.hFont, TRUE);
             }
         }
         return 0;
@@ -2392,6 +2650,7 @@ static LRESULT CALLBACK HumanSkillProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
         }
         if (LOWORD(wp) == ID_HS_SAVE)  { hs_write(); return 0; }
         if (LOWORD(wp) == ID_HS_IMPORT) { do_hs_import(hwnd); return 0; }
+        if (LOWORD(wp) == ID_HS_BATTLE) { bs_open(hwnd); return 0; }
         if (LOWORD(wp) == ID_HS_CLOSE) { DestroyWindow(hwnd); return 0; }
         return 0;
 
@@ -3405,6 +3664,60 @@ static void do_uitest(HWND hwnd)
         }
         fprintf(f, "case25 内置原始表: size=%d 职业=%d 技能=%d -> %s\r\n",
                 sh_human_orig_size(), cnt, skills, ok ? "PASS" : "FAIL");
+    }
+
+    /* case26：战斗参数（+0x0A 状态概率 / +0x14 命中 / +0x16 暴击 / +0x1C 四段表）读写 */
+    {
+        int ok = 0, rc = -1;
+        sh_human t;
+        if (sh_human_load_mem(sh_human_orig(), (size_t)sh_human_orig_size(), &t) == 0) {
+            int oldHit = sh_human_skill_hit(&t, 0, 2);   /* 职业0#03 原版 = 20 */
+            int oldSt  = sh_human_skill_status(&t, 0, 2);
+            int oldSg  = sh_human_skill_seg(&t, 0, 1, 0, 1);
+            ok = (sh_human_skill_seg(&t, 0, 1, 0, 1) == 100) &&   /* 八面威風 第0段倍率 */
+                 (sh_human_skill_seg(&t, 0, 1, 3, 1) == 100) &&   /* 第3段 */
+                 (sh_human_skill_seg(&t, 0, 2, 1, 1) == 50) &&    /* 九死一生 第1段 */
+                 (oldHit == 20) &&
+                 (sh_human_set_skill_hit(&t, 0, 2, -7) == 0) &&
+                 (sh_human_skill_hit(&t, 0, 2) == -7) &&          /* 负值往返 */
+                 (sh_human_set_skill_status(&t, 0, 2, 35) == 0) &&
+                 (sh_human_skill_status(&t, 0, 2) == 35) &&
+                 (sh_human_set_skill_crit(&t, 0, 2, 42) == 0) &&
+                 (sh_human_skill_crit(&t, 0, 2) == 42) &&
+                 (sh_human_set_skill_seg(&t, 0, 2, 2, 1, 88) == 0) &&
+                 (sh_human_skill_seg(&t, 0, 2, 2, 1) == 88) &&
+                 (sh_human_set_skill_hit(&t, 0, 2, 5000) == -2) &&   /* 越界拒绝 */
+                 (sh_human_set_skill_seg(&t, 0, 2, 4, 0, 1) == -1);  /* 段号非法 */
+            (void)oldSt; (void)oldSg;
+            sh_human_free(&t);
+            rc = 0;
+        }
+        fprintf(f, "case26 战斗参数读写: rc=%d seg=%s 负命中=%s -> %s\r\n",
+                rc, "ok", "ok", ok ? "PASS" : "FAIL");
+    }
+
+    /* case27：队别（unit+0x3B）+ 关卡号→地图名 */
+    {
+        int i, ok = 1, own = 0, neu = 0, foe = 0, bad = 0, ownPlayable = 0;
+        const char *lvnm;
+        for (i = 0; i < g.s.count; i++) {
+            switch (g.s.units[i].team) {
+            case 0: own++; if (sh_is_playable(&g.s.units[i])) ownPlayable++; break;
+            case 1: neu++; break;
+            case 2: foe++; break;
+            default: bad++; break;
+            }
+        }
+        lvnm = sh_level_name((int)g.s.level);
+        ok = (bad == 0) && (own + neu + foe == g.s.count) && (own > 0) &&
+             (lvnm != 0) &&
+             (sh_level_name(-1) == 0) && (sh_level_name(76) == 0) &&
+             (strcmp(sh_team_label(0), "我方") == 0) &&
+             (strcmp(sh_team_label(2), "敌方") == 0);
+        fprintf(f, "case27 队别/关卡: 关卡%d=%s 我%d/中%d/敌%d 异常%d -> %s\r\n",
+                (int)g.s.level, lvnm ? lvnm : "(未知)",
+                own, neu, foe, bad, ok ? "PASS" : "FAIL");
+        (void)ownPlayable;
     }
     /* case18：道具的 敏捷(+96) / 必殺(+100) 字段读写 */
     {

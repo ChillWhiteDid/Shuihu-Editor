@@ -58,6 +58,8 @@ static const char *s_field_label[SH_F_COUNT] = {
 #define SH_LEVEL_MAX     30
 #define SH_STAT_MAX      255
 #define SH_MONEY_OFFSET  0x1B
+#define SH_LEVEL_OFFSET  0x0D   /* 存档头 u16@13 = 关卡号（报告 v1.76 §4.36.1） */
+#define SH_TEAM_OFF      0x3B   /* 单位对象 +0x3B = 队别 0/1/2（报告 v1.74 §4.35.3） */
 #define SH_SCAN_START    0x100
 #define SH_SCAN_GAP      0x60   /* 相邻两个已接受锚点的最小间距（去重） */
 
@@ -164,6 +166,8 @@ static int try_unit(const uint8_t *p, size_t n, size_t o, sh_unit *u)
         size_t so = o + SH_SLOT_BASE + (size_t)k * SH_SLOT_STRIDE;
         u->slots[k] = (so < n) ? p[so] : 0;
     }
+    /* 队别（unit +0x3B = 锚点 − 5）：0=我方 1=中立 2=敌方（报告 v1.74 §4.35.3） */
+    u->team = (o >= 5 && (o - 5) < n) ? p[o - 5] : 0;
     find_hidden(p, n, u);
     return 1;
 }
@@ -202,6 +206,8 @@ int sh_load(const char *path, sh_save *s)
     }
 
     s->money = rd32(s->data, s->size, SH_MONEY_OFFSET);
+    /* 关卡号 = 头 u16@13；配 k_level_names 得地图名（报告 v1.76 §4.36.1） */
+    s->level = rd16(s->data, s->size, SH_LEVEL_OFFSET);
 
     for (o = SH_SCAN_START; o + 8 <= s->size && s->count < SH_MAX_UNITS; ) {
         sh_unit tmp;
@@ -467,4 +473,46 @@ int sh_unlock_hidden(sh_save *s, int idx, int slots)
         }
     }
     return 0;
+}
+
+/* ===== 关卡号 → 地图名（报告 v1.76 §4.36.1）=====
+ * 表来自 EXE VA 0x4430F0 的 76 槽指针表，13 个空槽用 0 表示；
+ * 非空 63 项与 Map\ 下的 63 组文件一一对应，顺序即关卡加载顺序。 */
+static const char *const k_level_names[76] = {
+    "n01", "n-add01", 0, "n-add02",
+    "act2-2", "act2-3", "n02", "n-add03",
+    "act3-1", "act3-2", "act3-3", "n03",
+    "act3-4", 0, "n-add04a", "n-add04b",
+    "act5-1a", "n-add05", 0, "act4-2",
+    "act4-3", "n04", "act5-1", "n-add06",
+    "train1", "n-add07", "act5-2", "act5-3",
+    "n05", 0, "act6-1", "act6-2",
+    "n-add08", "act6-3", "n06", 0,
+    "act7-1", "act7-1a", "n07", 0,
+    0, "n-add09a", "n-add09b", "act8-1",
+    "n-add10", "n08", "act9-1", "n09",
+    0, "n-add11", "act10-1", "act10-2",
+    "n-add12", "act11-1a", "n10", "act11-1",
+    "act11-2", "n-add13", "n11", 0,
+    0, "n-add14", 0, "n12",
+    0, "act13-1", "n-add15", "act13-2",
+    "n13", "act14-1", 0, "n-add16",
+    "train2", "act14-2", "act14-3", "n14",
+};
+// 有效条目数: 63
+const char *sh_level_name(int level)
+{
+    if (level < 0 || level >= 76) return 0;
+    return k_level_names[level];
+}
+
+/* 队别（unit+0x3B）→ 中文标签 */
+const char *sh_team_label(int team)
+{
+    switch (team) {
+    case 0: return "我方";
+    case 1: return "中立";
+    case 2: return "敌方";
+    default: return "?";
+    }
 }

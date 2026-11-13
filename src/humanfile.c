@@ -317,6 +317,76 @@ int sh_human_set_skill_reach(sh_human *h, int id, int i, int v)
     return 0;
 }
 
+/* ===== 战斗参数（报告 §4.33.1 / §4.33.3）===== */
+
+/* +0x0A：附加状态 1 的概率（百分点）。FUN_00406C60 里与攻击者 +0x52 相加，
+   再 rand()%100 < 该值 时给目标挂状态 1。原版取值 0/5/10/…/50。 */
+int sh_human_skill_status(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)h->data[off + 0x0A];
+}
+
+int sh_human_set_skill_status(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < 0 || v > 100) return -2;
+    h->data[off + 0x0A] = (uint8_t)v;
+    return 0;
+}
+
+/* +0x14：命中修正（有符号）。命中 = 攻方命中 - 守方敏捷/2 + 本值。
+   原版出现 -5/-10/-15（重型武器），故按 int16 读。 */
+int sh_human_skill_hit(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)(int16_t)rd16(h->data + off + 0x14);
+}
+
+int sh_human_set_skill_hit(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < -999 || v > 999) return -2;
+    wr16(h->data + off + 0x14, (uint16_t)(int16_t)v);
+    return 0;
+}
+
+/* +0x16：暴击修正。暴击率 = 攻方必殺/2 + 本值（原版 5..50）。 */
+int sh_human_skill_crit(const sh_human *h, int id, int i)
+{
+    int off = sh_human_skill_off(h, id, i);
+    return off < 0 ? -1 : (int)rd16(h->data + off + 0x16);
+}
+
+int sh_human_set_skill_crit(sh_human *h, int id, int i, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0) return -1;
+    if (v < 0 || v > 999) return -2;
+    wr16(h->data + off + 0x16, (uint16_t)v);
+    return 0;
+}
+
+/* +0x1C 起 4 段攻击表，每段 6 B：+0 触发帧、+2 伤害倍率%、+4 方向偏移。
+   FUN_004073E0 逐段取：倍率非 0 才出手（0 = 该段不存在）。 */
+int sh_human_skill_seg(const sh_human *h, int id, int i, int seg, int field)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0 || seg < 0 || seg > 3 || field < 0 || field > 2) return -1;
+    return (int)rd16(h->data + off + 0x1C + seg * 6 + field * 2);
+}
+
+int sh_human_set_skill_seg(sh_human *h, int id, int i, int seg, int field, int v)
+{
+    int off = sh_human_skill_off(h, id, i);
+    if (off < 0 || seg < 0 || seg > 3 || field < 0 || field > 2) return -1;
+    if (v < 0 || v > 9999) return -2;
+    wr16(h->data + off + 0x1C + seg * 6 + field * 2, (uint16_t)v);
+    return 0;
+}
+
 int sh_human_skill_hidden_count(const sh_human *h, int id)
 {
     int i, n, c = 0;
@@ -541,9 +611,22 @@ int sh_human_write(sh_human *h)
                     sh_human_skill_range(&chk, i, k) != sh_human_skill_range(h, i, k) ||
                     sh_human_skill_aoe(&chk, i, k) != sh_human_skill_aoe(h, i, k) ||
                     sh_human_skill_reach(&chk, i, k) != sh_human_skill_reach(h, i, k) ||
+                    sh_human_skill_status(&chk, i, k) != sh_human_skill_status(h, i, k) ||
+                    sh_human_skill_hit(&chk, i, k) != sh_human_skill_hit(h, i, k) ||
+                    sh_human_skill_crit(&chk, i, k) != sh_human_skill_crit(h, i, k) ||
                     sh_human_skill_cat(&chk, i, k) != sh_human_skill_cat(h, i, k)) {
                     sh_human_free(&chk);
                     return -2;
+                }
+                {
+                    int sg, fd;
+                    for (sg = 0; sg < 4; sg++)
+                        for (fd = 0; fd < 3; fd++)
+                            if (sh_human_skill_seg(&chk, i, k, sg, fd) !=
+                                sh_human_skill_seg(h, i, k, sg, fd)) {
+                                sh_human_free(&chk);
+                                return -2;
+                            }
                 }
             }
         }

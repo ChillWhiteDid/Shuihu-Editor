@@ -46,12 +46,14 @@ typedef struct {
     uint8_t  slots[SH_SLOT_COUNT];   /* 槽内 +0 = 1 基道具 id，0=空 */
     uint8_t  hidden[SH_HIDDEN_MAX];  /* 隐藏技标志块原样（0=已领悟，1=未领悟） */
     int      hidden_len;             /* 0 表示未找到标志块 */
+    uint8_t  team;                   /* 队别 unit+0x3B：0=我方 1=中立 2=敌方 */
 } sh_unit;
 
 typedef struct {
     uint8_t *data;                   /* 整个存档（写回时原地改） */
     size_t   size;
     uint32_t money;
+    uint16_t level;                  /* 关卡号（存档头 u16@13） */
     sh_unit  units[SH_MAX_UNITS];
     int      count;                  /* 实际解析到的单位数 */
 } sh_save;
@@ -120,5 +122,12 @@ int sh_unlock_hidden(sh_save *s, int idx, int slots);
 
 /* 字段的取值范围上限（供界面/CLI 校验）；未知返回 65535 */
 int sh_field_max(sh_field f);
+
+/* 关卡号 → 地图名（如 61 → "n-add14"）；越界或空槽返回 NULL。
+ * 表来自 EXE VA 0x4430F0（76 槽 / 63 个有效），见报告 v1.76 §4.36.1。 */
+const char *sh_level_name(int level);
+
+/* 队别（unit+0x3B）→ "我方" / "中立" / "敌方" */
+const char *sh_team_label(int team);
 
 #endif /* SH_SAVE_H */

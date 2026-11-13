@@ -86,6 +86,16 @@ int  sh_human_skill_cost(const sh_human *h, int id, int i);   /* +0x12 气力消
 int  sh_human_skill_range(const sh_human *h, int id, int i);  /* +0x10 范围宽度（格） */
 int  sh_human_skill_aoe(const sh_human *h, int id, int i);    /* +0x06 范围半径：0=单体 */
 int  sh_human_skill_reach(const sh_human *h, int id, int i);  /* +0x0D 射程（格） */
+/* --- 战斗参数（报告 §4.33.1 / §4.33.3） --- */
+int  sh_human_skill_status(const sh_human *h, int id, int i); /* +0x0A 附加状态1概率 % 0..100 */
+int  sh_human_skill_hit(const sh_human *h, int id, int i);    /* +0x14 命中修正（有符号：负值减命中） */
+int  sh_human_skill_crit(const sh_human *h, int id, int i);   /* +0x16 暴击修正 */
+int  sh_human_skill_seg(const sh_human *h, int id, int i, int seg, int field);
+                                              /* +0x1C 起 4 段表：field 0=触发帧 1=伤害倍率% 2=方向 */
+int  sh_human_set_skill_status(sh_human *h, int id, int i, int v);  /* 0..100 */
+int  sh_human_set_skill_hit(sh_human *h, int id, int i, int v);     /* -999..999 */
+int  sh_human_set_skill_crit(sh_human *h, int id, int i, int v);    /* 0..999 */
+int  sh_human_set_skill_seg(sh_human *h, int id, int i, int seg, int field, int v); /* 0..9999 */
 int  sh_human_skill_hidden_count(const sh_human *h, int id);
 int  sh_human_skill_level_max(void);   /* 30 */
 
