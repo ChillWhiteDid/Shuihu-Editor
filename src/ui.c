@@ -23,6 +23,7 @@
 #include "tree.h"
 #include "textconv.h"
 #include "fileio.h"
+#include "mapedit.h"
 
 /* ================= 控件 ID 规划 =================
  * Windows 的 WM_COMMAND 只取 LOWORD，所以控件 ID 必须 < 65536。
@@ -73,6 +74,7 @@
 #define ID_STATUS      20000  /* 状态栏（两页都显示）*/
 #define ID_TAB_SAVE    20010  /* 页签：存档修改 */
 #define ID_TAB_GOODS   20011  /* 页签：道具编辑 */
+#define ID_TAB_MAP     20012  /* 页签：关卡编辑（MAP/ACT，页面本身是独立子窗口） */
 #define ID_HUMAN       20020  /* 人物编辑：两页常显，不随页签隐藏 */
 
 /* ---- 子窗口：21000 – 22999 ---- */
@@ -119,8 +121,8 @@
 #define ID_BS_SAVE     21630  /* 写入文件 */
 #define ID_BS_CLOSE    21631  /* 关闭 */
 
-#define APP_VERSION  "v2.2.3"
-#define APP_BUILD    "2026-11-13"
+#define APP_VERSION  "V2.3"
+#define APP_BUILD    "2026-11-14"
 
 /* 界面上要显示的字段（不含类型 id） */
 static const sh_field kFields[] = {
@@ -173,6 +175,7 @@ static int  recompute_dirty(void);
 static void update_title(HWND hwnd, int dirty);
 static void do_about(void);
 static void set_page(int which);
+static HWND s_mapPage;   /* 「关卡编辑」页子窗口（mapedit.c 创建），NULL = 未创建 */
 static int  is_goods_id(int id);
 static void do_goods(void);
 static void do_human(void);
@@ -549,6 +552,11 @@ static void update_title(HWND hwnd, int dirty)
             dirty ? "  *" : "");
     if (hwnd) SetWindowTextA(hwnd, t);
 }
+
+/* 前置声明：定义在文件后半（从 g.path 猜 GOODS.DAB 位置），此处有更早的调用点。
+ * 缺这一行时 TCC 只给隐式声明警告，而 GCC 报 "static declaration follows
+ * non-static declaration" 直接失败（build-w11.bat 历史遗留问题）。 */
+static int goods_locate(char *out, size_t n);
 
 /* 取某道具的 4 个装备缓存值（GOODS +76/+82/+84/+90）。
  * 优先用已加载的 s_gb，否则临时读一次 GOODS.DAB。
@@ -1248,7 +1256,8 @@ static int is_goods_id(int id)
 /* 两页常显的控件：不参与页签切换 */
 static int is_shared_id(int id)
 {
-    return id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS || id == ID_HUMAN;
+    return id == ID_STATUS || id == ID_TAB_SAVE || id == ID_TAB_GOODS ||
+           id == ID_TAB_MAP || id == ID_HUMAN;
 }
 
 static void set_page(int which)
@@ -1259,12 +1268,15 @@ static void set_page(int which)
     for (c = GetWindow(g.hMain, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
         int id = GetDlgCtrlID(c);
         if (is_shared_id(id)) continue;
+        if (c == s_mapPage) continue;   /* 关卡页是独立子窗口，按页签单独显隐 */
         /* 注意：存档页的静态标签 ID 是 0，不能跳过 —— 否则两页会叠在一起 */
         /* 注意 ID_MONEY 是 1050，不能把 1034..1051 整段当成道具页 */
         ShowWindow(c, (is_goods_id(id) == which) ? SW_SHOW : SW_HIDE);
     }
     EnableWindow(GetDlgItem(g.hMain, ID_TAB_SAVE),  which == 0 ? FALSE : TRUE);
     EnableWindow(GetDlgItem(g.hMain, ID_TAB_GOODS), which == 1 ? FALSE : TRUE);
+    EnableWindow(GetDlgItem(g.hMain, ID_TAB_MAP),   which == 2 ? FALSE : TRUE);
+    if (s_mapPage) ShowWindow(s_mapPage, which == 2 ? SW_SHOW : SW_HIDE);
 }
 
 /* 进入道具页：首次进入时定位并载入 GOODS.DAB */
@@ -3169,21 +3181,21 @@ static void create_children(HWND hwnd)
                         x, y + 16, 160, 220, ID_SLOT0 + i);
     }
 
-    g.hHidden = mk("STATIC", "", SS_LEFT, 282, 366, 640, 18, ID_HIDDEN);
+    g.hHidden = mk("STATIC", "", SS_LEFT, 282, 486, 640, 18, ID_HIDDEN);
 
     /* 第一行：写入 / 恢复 / 重载 */
-    mk("BUTTON", "写入存档",   BS_PUSHBUTTON, 282, 386, 96, 30, ID_WRITE);
-    mk("BUTTON", "恢复存档",   BS_PUSHBUTTON, 386, 386, 90, 30, ID_RESTORE);
-    mk("BUTTON", "重载存档",   BS_PUSHBUTTON, 484, 386, 90, 30, ID_RELOAD);
+    mk("BUTTON", "写入存档",   BS_PUSHBUTTON, 282, 506, 96, 30, ID_WRITE);
+    mk("BUTTON", "恢复存档",   BS_PUSHBUTTON, 386, 506, 90, 30, ID_RESTORE);
+    mk("BUTTON", "重载存档",   BS_PUSHBUTTON, 484, 506, 90, 30, ID_RELOAD);
 
     /* 第二行：技能相关 */
-    mk("BUTTON", "查看技能树", BS_PUSHBUTTON, 282, 420, 96, 30, ID_TREE);
-    mk("BUTTON", "解锁隐藏技", BS_PUSHBUTTON, 386, 420, 96, 30, ID_UNLOCK);
-    mk("BUTTON", "装备加成",   BS_PUSHBUTTON, 490, 420, 90, 30, ID_CACHE);
+    mk("BUTTON", "查看技能树", BS_PUSHBUTTON, 282, 540, 96, 30, ID_TREE);
+    mk("BUTTON", "解锁隐藏技", BS_PUSHBUTTON, 386, 540, 96, 30, ID_UNLOCK);
+    mk("BUTTON", "装备加成",   BS_PUSHBUTTON, 490, 540, 90, 30, ID_CACHE);
 
     /* 第三行：关于 / 退出 */
-    mk("BUTTON", "关于",       BS_PUSHBUTTON, 282, 454, 66, 30, ID_ABOUT);
-    mk("BUTTON", "退出",       BS_PUSHBUTTON, 356, 454, 66, 30, ID_QUIT);
+    mk("BUTTON", "关于",       BS_PUSHBUTTON, 282, 574, 66, 30, ID_ABOUT);
+    mk("BUTTON", "退出",       BS_PUSHBUTTON, 356, 574, 66, 30, ID_QUIT);
 
     /* 攻击/防御右侧的“装备 +N”分解标签（与上面字段循环的坐标对齐：
      * 攻击是 i=5 -> row5 y=200；防御 i=6 -> row6 y=230；限值标签在 x=434） */
@@ -3191,8 +3203,16 @@ static void create_children(HWND hwnd)
     g.hEquipNote[1] = mk("STATIC", "", SS_LEFT, 498, 230, 78, 20, ID_EQNOTE0 + 1);
 
     /* ---- 页签：两个按钮切换两个页面（伪标签，不依赖 comctl32）---- */
-    mk("BUTTON", "存档修改", BS_PUSHBUTTON, 12, 388, 118, 30, ID_TAB_SAVE);
-    mk("BUTTON", "道具编辑", BS_PUSHBUTTON, 138, 388, 118, 30, ID_TAB_GOODS);
+    mk("BUTTON", "存档修改", BS_PUSHBUTTON, 12, 508, 118, 30, ID_TAB_SAVE);
+    mk("BUTTON", "道具编辑", BS_PUSHBUTTON, 138, 508, 118, 30, ID_TAB_GOODS);
+    mk("BUTTON", "关卡编辑", BS_PUSHBUTTON, 138, 542, 118, 30, ID_TAB_MAP);
+
+    /* ---- 关卡编辑页：独立子窗口（mapedit.c），控件 ID 与主窗口不冲突 ---- */
+    {
+        RECT mrc;
+        mrc.left = 0; mrc.top = 0; mrc.right = 954; mrc.bottom = 498;
+        s_mapPage = sh_mapedit_create(hwnd, (HINSTANCE)GetModuleHandleA(NULL), &mrc);
+    }
 
     /* ---- 道具页（默认隐藏；ID 1034..1059、1062..1072 归它）---- */
     g.hGbList = mk("LISTBOX", "", WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
@@ -3217,14 +3237,14 @@ static void create_children(HWND hwnd)
        SS_LEFT, 282, 264, 480, 44, ID_GB_WARN);
     mk("BUTTON", "写入道具表", BS_PUSHBUTTON, 282, 316, 120, 30, ID_GB_SAVE);
     mk("BUTTON", "恢复道具表", BS_PUSHBUTTON, 410, 316, 120, 30, ID_GB_RESTORE);
-    mk("BUTTON", "人物编辑", BS_PUSHBUTTON, 12, 422, 118, 30, ID_HUMAN);
+    mk("BUTTON", "人物编辑", BS_PUSHBUTTON, 12, 542, 118, 30, ID_HUMAN);
     mk("STATIC", "说明：", SS_LEFT, 282, 356, 60, 20, ID_GB_NOTE);
     mk("STATIC", "", SS_LEFT, 342, 356, 430, 56, ID_GB_DESC);
-    mk("STATIC", "", SS_LEFT, 282, 420, 540, 20, ID_GB_CHK);
+    mk("STATIC", "", SS_LEFT, 282, 540, 540, 20, ID_GB_CHK);
 
     g.hStatus = mk("STATIC", "版本 " APP_VERSION " — 请先选择存档文件（可直接在左上角输入路径，再点「打开」）",
                    SS_LEFT | SS_LEFTNOWORDWRAP | SS_SUNKEN,
-                   12, 488, 916, 22, ID_STATUS);
+                   12, 608, 916, 22, ID_STATUS);
 
     SetTimer(hwnd, 1, 200, NULL);   /* tooltip 轮询 */
     /* 建完控件立刻定位到存档页：否则两页控件都带 WS_VISIBLE，会叠在一起 */
@@ -3664,6 +3684,14 @@ static void do_uitest(HWND hwnd)
         }
         fprintf(f, "case25 内置原始表: size=%d 职业=%d 技能=%d -> %s\r\n",
                 sh_human_orig_size(), cnt, skills, ok ? "PASS" : "FAIL");
+    }
+
+    /* case28：关卡编辑页（MAP/ACT）—— 数据链路 + 页面控件存在性 */
+    {
+        int mf = sh_mapedit_selftest(g.hMain);
+        fprintf(f, "case28 关卡页(MAP/ACT): 失败位=0x%X -> %s\r\n",
+                (unsigned)mf, mf == 0 ? "PASS" : "FAIL");
+        if (mf != 0) ok = 0;
     }
 
     /* case26：战斗参数（+0x0A 状态概率 / +0x14 命中 / +0x16 暴击 / +0x1C 四段表）读写 */
@@ -4111,6 +4139,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT m, WPARAM wp, LPARAM lp)
             set_page(0);
             return 0;
         case ID_TAB_GOODS: do_goods();    return 0;
+        case ID_TAB_MAP:   set_page(2);   return 0;
         case ID_ABOUT:   do_about();     return 0;
         case ID_QUIT:    DestroyWindow(hwnd); return 0;
         case ID_GB_SAVE:
@@ -4210,7 +4239,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmd, int show)
     hwnd = CreateWindowExA(0, "ShuiHuEdit",
         ansi("水浒传之梁山好汉 — 存档编辑器  " APP_VERSION),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 960, 551,
+        CW_USEDEFAULT, CW_USEDEFAULT, 960, 673,
         NULL, NULL, hInst, NULL);
     if (!hwnd) return 1;
 

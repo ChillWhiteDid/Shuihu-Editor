@@ -19,6 +19,7 @@
 #include "goods.h"
 #include "tree.h"
 #include "human.h"
+#include "mapfile.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,6 +109,14 @@ static void usage(void)
     printf("  shuihu-save -slot <save> <类型id> <槽0-6> <道具id> [-y]   改某个槽\n");
     printf("  shuihu-save -cache <save> <类型id> <槽0-6> <atk|def> <值> [-y]   改装备加成缓存\n");
     printf("  shuihu-save -tree <save> <类型id>               查看技能树\n");
+    printf("\n-- 关卡数据（改游戏本体数据，对所有存档与新开局生效）--\n");
+    printf("  shuihu-save -map <MAP>                          棋盘 MAP 汇总（尺寸/记录数/tileId 范围）\n");
+    printf("  shuihu-save -map <MAP> <x> <y>                  看一个格（含附加层链）\n");
+    printf("  shuihu-save -map-set <MAP> <x> <y> <tileId> [-y]  改格子的图块 id\n");
+    printf("  shuihu-save -act <ACT>                          布阵表 ACT 全部记录\n");
+    printf("  shuihu-save -act <ACT> <序号>                   看一条记录\n");
+    printf("  shuihu-save -act-set <ACT> <序号> <字段> <值> [-y]\n");
+    printf("    字段: type f2 f4 team x y fa level flag action f10 f12 f16 slot0..slot6\n");
     printf("\n-- 道具表（改游戏本体数据，不影响单个存档）--\n");
     printf("  shuihu-save -goods <GOODS.DAB>                  列出 200 件道具\n");
     printf("  shuihu-save -goods-set <GOODS.DAB> <id> <字段> <值> [-y]\n");
@@ -309,6 +318,35 @@ static int commit(sh_save *s, const char *path, int verbose)
     return ok ? 0 : -1;
 }
 
+/* 关卡数据：ACT 记录打印（-act / -act-set 共用） */
+static const int s_slot_off[SH_AREC_SLOTN] = {
+    SH_AREC_SLOT0,     SH_AREC_SLOT0 + 2,  SH_AREC_SLOT0 + 4,
+    SH_AREC_SLOT0 + 6, SH_AREC_SLOT0 + 8,  SH_AREC_SLOT0 + 10,
+    SH_AREC_SLOT0 + 12
+};
+
+static void act_print_record(const sh_act *a, int i)
+{
+    int k;
+    printf("  [%d] 类型 %-4d(%-6s) 队别 %d  坐标 (%d,%d)  等级 %-2d  动作 %d  标志 %d\n",
+           i,
+           sh_act_get(a, i, SH_AREC_TYPE, 2),
+           sh_char_name(sh_act_get(a, i, SH_AREC_TYPE, 2)),
+           sh_act_get(a, i, SH_AREC_TEAM, 1),
+           sh_act_get(a, i, SH_AREC_X, 2),
+           sh_act_get(a, i, SH_AREC_Y, 2),
+           sh_act_get(a, i, SH_AREC_LEVEL, 2),
+           sh_act_get(a, i, SH_AREC_ACTION, 1),
+           sh_act_get(a, i, SH_AREC_FLAG, 1));
+    printf("        槽:");
+    for (k = 0; k < SH_AREC_SLOTN; k++) {
+        int id = sh_act_get(a, i, s_slot_off[k], 2);
+        if (id > 0) printf(" %d:%s", id, sh_item_name(id));
+        else printf(" -");
+    }
+    printf("\n");
+}
+
 int main(int argc, char **argv)
 {
     sh_save s;
@@ -458,6 +496,242 @@ int main(int argc, char **argv)
             sh_goods_free(&gb);
             return 0;
         }
+    }
+
+    /* ---------------- 关卡数据：MAP（棋盘）/ ACT（布阵） ----------------
+     * 与 GOODS 一样不碰存档，必须在 sh_load 之前分流。 */
+    if (strcmp(cmd, "-map") == 0 || strcmp(cmd, "-map-set") == 0) {
+        const char *pos[4];
+        int np = 0, gi, yes = 0;
+        sh_map mp;
+        int lrc;
+
+        for (gi = 2; gi < argc; gi++) {
+            if (strcmp(argv[gi], "-y") == 0) { yes = 1; continue; }
+            if (argv[gi][0] == '-') continue;
+            if (np < 4) pos[np] = argv[gi];
+            np++;
+        }
+        if (np < 1) { usage(); return 2; }
+
+        lrc = sh_map_load(pos[0], &mp);
+        if (lrc != 0) {
+            printf("无法读入棋盘 MAP：%s\n",
+                   lrc == -3 ? "魔数/版本不对（不是 MAP，或 ver != 1）"
+                 : lrc == -4 ? "长度不是 9+5n，或 n < w*h"
+                 : lrc == -5 ? "按「格记录 + 附加层」解析走不完文件"
+                             : "文件打不开或太小");
+            return 1;
+        }
+
+        if (strcmp(cmd, "-map-set") == 0) {
+            int x, y, tv, old;
+            if (np < 4) {
+                printf("用法: -map-set <MAP> <x> <y> <tileId> [-y]\n");
+                sh_map_free(&mp);
+                return 2;
+            }
+            x = atoi(pos[1]); y = atoi(pos[2]); tv = atoi(pos[3]);
+            if (x < 0 || y < 0 || x >= mp.w || y >= mp.h) {
+                printf("[拒绝] 坐标越界：本图 %d x %d（x 0..%d, y 0..%d）\n",
+                       mp.w, mp.h, mp.w - 1, mp.h - 1);
+                sh_map_free(&mp);
+                return 1;
+            }
+            old = sh_map_tile(&mp, x, y);
+            printf("[计划] 格 (%d,%d) tileId: %d -> %d\n", x, y, old, tv);
+            if (tv > SH_MAP_MAX_TILE)
+                printf("[注意] 超过原版实测最大值 %d（多半显示为空图块）\n", SH_MAP_MAX_TILE);
+            if (sh_map_set_tile(&mp, x, y, tv) != 0) {
+                printf("[拒绝] tileId 必须在 0..65535\n");
+                sh_map_free(&mp);
+                return 1;
+            }
+            if (!yes) { printf("[干跑] 未加 -y，未改动任何文件。\n"); sh_map_free(&mp); return 0; }
+            {
+                char bak[600];
+                if (sh_map_backup(&mp, bak, sizeof(bak)) != 0) {
+                    printf("[失败] 备份失败，已中止（原文件未改动）。\n");
+                    sh_map_free(&mp);
+                    return 1;
+                }
+                printf("[备份] %s\n", to_utf8(bak));
+            }
+            lrc = sh_map_write(&mp);
+            if (lrc != 0) {
+                printf("[失败] %s\n", lrc == -1 ? "写入失败" : "写后校验不一致");
+                sh_map_free(&mp);
+                return 1;
+            }
+            printf("[校验] 通过：重读后 %d x %d、%d 条记录、该格 tileId=%d\n",
+                   mp.w, mp.h, mp.n, sh_map_tile(&mp, x, y));
+            sh_map_free(&mp);
+            return 0;
+        }
+
+        if (np >= 3) {
+            int x = atoi(pos[1]), y = atoi(pos[2]), k, ln;
+            if (x < 0 || y < 0 || x >= mp.w || y >= mp.h) {
+                printf("[拒绝] 坐标越界：本图 %d x %d（x 0..%d, y 0..%d）\n",
+                       mp.w, mp.h, mp.w - 1, mp.h - 1);
+                sh_map_free(&mp);
+                return 1;
+            }
+            ln = sh_map_layer_n(&mp, x, y);
+            printf("格 (%d,%d)  tileId=%d  flag=0x%02X  sub=0x%02X  附加层 %d 条\n",
+                   x, y, sh_map_tile(&mp, x, y), sh_map_flag(&mp, x, y),
+                   sh_map_sub(&mp, x, y), ln);
+            for (k = 0; k < ln; k++)
+                printf("  [附加层 %d] tileId=%d\n", k, sh_map_layer_tile(&mp, x, y, k));
+            sh_map_free(&mp);
+            return 0;
+        }
+
+        {
+            int x, y, tmin = 65536, tmax = -1, withlay = 0;
+            for (y = 0; y < mp.h; y++) {
+                for (x = 0; x < mp.w; x++) {
+                    int t = sh_map_tile(&mp, x, y);
+                    if (t < tmin) tmin = t;
+                    if (t > tmax) tmax = t;
+                    if (sh_map_flag(&mp, x, y) & 2) withlay++;
+                }
+            }
+            printf("棋盘  : %s\n", to_utf8(pos[0]));
+            printf("尺寸  : %d x %d = %d 格\n", mp.w, mp.h, mp.cells);
+            printf("记录  : %d 条（格 %d + 附加层 %d）\n", mp.n, mp.cells, mp.layers);
+            printf("tileId: %d .. %d（原版全库实测 0..%d）\n", tmin, tmax, SH_MAP_MAX_TILE);
+            printf("附加层: %d 个格带附加层\n", withlay);
+        }
+        sh_map_free(&mp);
+        return 0;
+    }
+
+    if (strcmp(cmd, "-act") == 0 || strcmp(cmd, "-act-set") == 0) {
+        const char *pos[5];
+        int np = 0, gi, yes = 0;
+        sh_act ac;
+        int lrc;
+
+        for (gi = 2; gi < argc; gi++) {
+            if (strcmp(argv[gi], "-y") == 0) { yes = 1; continue; }
+            if (argv[gi][0] == '-') continue;
+            if (np < 5) pos[np] = argv[gi];
+            np++;
+        }
+        if (np < 1) { usage(); return 2; }
+
+        lrc = sh_act_load(pos[0], &ac);
+        if (lrc != 0) {
+            printf("无法读入布阵表 ACT：%s\n",
+                   lrc == -3 ? "魔数/版本/dataOffset 不对（不是 ACT 2/1，或 dataOffset != 11）"
+                 : lrc == -4 ? "长度不是 11+38n，或 n 与文件长度对不上"
+                             : "文件打不开或太小");
+            return 1;
+        }
+
+        if (strcmp(cmd, "-act-set") == 0) {
+            static const struct { const char *name; int off, size, lo, hi; } ftab[] = {
+                {"type",   SH_AREC_TYPE,   2, 0, 65535},
+                {"f2",     SH_AREC_F2,     2, 0, 65535},
+                {"f4",     SH_AREC_F4,     1, 0, 3},
+                {"team",   SH_AREC_TEAM,   1, 0, 4},
+                {"x",      SH_AREC_X,      2, 0, 255},
+                {"y",      SH_AREC_Y,      2, 0, 255},
+                {"fa",     SH_AREC_FA,     2, 0, 65535},
+                {"level",  SH_AREC_LEVEL,  2, 0, 60},
+                {"flag",   SH_AREC_FLAG,   1, 0, 1},
+                {"action", SH_AREC_ACTION, 1, 0, 9},
+                {"f10",    SH_AREC_F10,    2, 0, 65535},
+                {"f12",    SH_AREC_F12,    4, 0, 2147483647},
+                {"f16",    SH_AREC_F16,    2, 0, 65535},
+                {"slot0",  SH_AREC_SLOT0,      2, 0, 255},
+                {"slot1",  SH_AREC_SLOT0 + 2,  2, 0, 255},
+                {"slot2",  SH_AREC_SLOT0 + 4,  2, 0, 255},
+                {"slot3",  SH_AREC_SLOT0 + 6,  2, 0, 255},
+                {"slot4",  SH_AREC_SLOT0 + 8,  2, 0, 255},
+                {"slot5",  SH_AREC_SLOT0 + 10, 2, 0, 255},
+                {"slot6",  SH_AREC_SLOT0 + 12, 2, 0, 255}
+            };
+            int fi, nf, idx, val, old;
+            const char *fname;
+            if (np < 4) {
+                printf("用法: -act-set <ACT> <序号> <字段> <值> [-y]\n");
+                printf("字段: type f2 f4 team x y fa level flag action f10 f12 f16 slot0..slot6\n");
+                sh_act_free(&ac);
+                return 2;
+            }
+            idx = atoi(pos[1]);
+            fname = pos[2];
+            val = atoi(pos[3]);
+            if (idx < 0 || idx >= ac.count) {
+                printf("[拒绝] 序号越界：本表 %d 条（0..%d）\n", ac.count, ac.count - 1);
+                sh_act_free(&ac);
+                return 1;
+            }
+            nf = (int)(sizeof(ftab) / sizeof(ftab[0]));
+            for (fi = 0; fi < nf; fi++)
+                if (strcmp(fname, ftab[fi].name) == 0) break;
+            if (fi >= nf) {
+                printf("[拒绝] 未知字段「%s」\n", fname);
+                sh_act_free(&ac);
+                return 2;
+            }
+            old = sh_act_get(&ac, idx, ftab[fi].off, ftab[fi].size);
+            printf("[计划] 记录 %d 的 %s: %d -> %d\n", idx, ftab[fi].name, old, val);
+            if (val < ftab[fi].lo || val > ftab[fi].hi) {
+                printf("[拒绝] %s 允许范围 %d..%d\n", ftab[fi].name, ftab[fi].lo, ftab[fi].hi);
+                sh_act_free(&ac);
+                return 1;
+            }
+            if (sh_act_set(&ac, idx, ftab[fi].off, ftab[fi].size, val) != 0) {
+                printf("[拒绝] 写入失败\n");
+                sh_act_free(&ac);
+                return 1;
+            }
+            if (!yes) { printf("[干跑] 未加 -y，未改动任何文件。\n"); sh_act_free(&ac); return 0; }
+            {
+                char bak[600];
+                if (sh_act_backup(&ac, bak, sizeof(bak)) != 0) {
+                    printf("[失败] 备份失败，已中止（原文件未改动）。\n");
+                    sh_act_free(&ac);
+                    return 1;
+                }
+                printf("[备份] %s\n", to_utf8(bak));
+            }
+            lrc = sh_act_write(&ac);
+            if (lrc != 0) {
+                printf("[失败] %s\n", lrc == -1 ? "写入失败" : "写后校验不一致");
+                sh_act_free(&ac);
+                return 1;
+            }
+            printf("[校验] 通过：重读后 %d 条记录、记录 %d 的 %s = %d\n",
+                   ac.count, idx, ftab[fi].name,
+                   sh_act_get(&ac, idx, ftab[fi].off, ftab[fi].size));
+            sh_act_free(&ac);
+            return 0;
+        }
+
+        if (np >= 2) {
+            int idx = atoi(pos[1]);
+            if (idx < 0 || idx >= ac.count) {
+                printf("[拒绝] 序号越界：本表 %d 条（0..%d）\n", ac.count, ac.count - 1);
+                sh_act_free(&ac);
+                return 1;
+            }
+            act_print_record(&ac, idx);
+            sh_act_free(&ac);
+            return 0;
+        }
+
+        {
+            int k;
+            printf("布阵表: %s\n", to_utf8(pos[0]));
+            printf("记录  : %d 条（11 B 头 + 38 B x n）\n", ac.count);
+            for (k = 0; k < ac.count; k++) act_print_record(&ac, k);
+        }
+        sh_act_free(&ac);
+        return 0;
     }
 
     for (i = 2; i < argc; i++) {
